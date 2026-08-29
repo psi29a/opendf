@@ -1,0 +1,206 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    # Persist vcpkg's built packages in the GitHub Actions cache so dependencies
+    # are built from source only once, then restored on later runs.
+    env:
+      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+    strategy:
+      # One platform failing shouldn't hide results from the other two.
+      fail-fast: false
+      matrix:
+        include:
+          # SDL2, OSG and MyGUI are all in noble, so ubuntu-latest is fine
+          # here -- no need for a newer image the way an SDL3 project needs.
+          - os: ubuntu-latest
+            name: Linux (GCC)
+          - os: macos-latest
+            name: macOS (Clang)
+          - os: windows-latest
+            name: Windows (MSVC)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Everything opendf needs is packaged in Debian/Ubuntu, launcher included.
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake ninja-build build-essential \
+            libopenscenegraph-dev libmygui-dev libsdl2-dev \
+            libgl1-mesa-dev qt6-base-dev
+
+      # Homebrew has open-scene-graph and qt, but:
+      #   * no mygui formula at all -- it has to be built from source (below)
+      #   * no sdl2 formula either; it was replaced by sdl2-compat, which is
+      #     an SDL2 API/ABI shim over SDL3 and installs the same sdl2.pc and
+      #     SDL2 headers find_package(SDL2) looks for.
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install cmake ninja open-scene-graph sdl2-compat qt freetype
+
+      # MyGUI from source, since Homebrew dropped it. Only MyGUIEngine is
+      # needed: opendf brings its own OSG-backed RenderManager/DataManager
+      # (src/opendf/gui/gui.cpp) rather than using a MyGUI render platform,
+      # so the demos, tools, docs and platform libs are all switched off and
+      # this stays a short build.
+      #
+      # MYGUI_RENDERSYSTEM=1 is the "Dummy" platform. The default is 3 (Ogre),
+      # which would drag in an Ogre dependency we have no use for.
+      - name: Build MyGUI from source (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          git clone --depth 1 --branch MyGUI3.4.4 \
+            https://github.com/MyGUI/mygui.git "$RUNNER_TEMP/mygui"
+          cmake -S "$RUNNER_TEMP/mygui" -B "$RUNNER_TEMP/mygui/build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/mygui-install" \
+            -DMYGUI_RENDERSYSTEM=1 \
+            -DMYGUI_BUILD_DEMOS=OFF \
+            -DMYGUI_BUILD_TOOLS=OFF \
+            -DMYGUI_BUILD_PLUGINS=OFF \
+            -DMYGUI_BUILD_DOCS=OFF \
+            -DMYGUI_BUILD_UNITTESTS=OFF \
+            -DMYGUI_BUILD_TEST_APP=OFF
+          cmake --build "$RUNNER_TEMP/mygui/build" --target install
+
+      # Expose the GitHub Actions cache endpoint/token to vcpkg's x-gha binary
+      # source (set via VCPKG_BINARY_SOURCES above).
+      - name: Export GitHub Actions cache variables (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      # Cache the whole vcpkg tree (tool + installed/). On a hit we skip clone,
+      # bootstrap and install entirely -- osg alone is a long build from source.
+      # The key carries a MANUAL version (-vN): bump it when the install command
+      # below changes (new port, different triplet, ...). Deliberately not
+      # hashFiles() over this workflow, so unrelated CI edits don't throw away a
+      # large, perfectly good cache. x-gha still helps on a miss by restoring
+      # per-package binaries instead of rebuilding them.
+      - name: Cache vcpkg
+        if: runner.os == 'Windows'
+        id: cache-vcpkg
+        uses: actions/cache@v4
+        with:
+          path: ~/vcpkg
+          key: vcpkg-${{ runner.os }}-v1-osg-mygui-sdl2
+          restore-keys: |
+            vcpkg-${{ runner.os }}-v1-
+
+      # cmake, ninja and git are preinstalled on the windows-latest image, so we
+      # only need vcpkg. Qt6 comes from install-qt-action below rather than
+      # vcpkg's qtbase, which is a 45+ minute from-source build.
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows' && steps.cache-vcpkg.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git $env:USERPROFILE\vcpkg
+          & "$env:USERPROFILE\vcpkg\bootstrap-vcpkg.bat"
+          & "$env:USERPROFILE\vcpkg\vcpkg.exe" install osg mygui sdl2 --triplet x64-windows
+
+      # Ensure Ninja is on PATH for later steps. (gha-setup-ninja registers it
+      # via $GITHUB_PATH, which -- unlike choco -- propagates across steps.)
+      - name: Set up Ninja (Windows)
+        if: runner.os == 'Windows'
+        uses: seanmiddleditch/gha-setup-ninja@master
+
+      # Prebuilt Qt6 for the launcher; sets Qt6_DIR + PATH so find_package(Qt6)
+      # succeeds and BUILD_LAUNCHER=AUTO picks it up.
+      - name: Install Qt6 (Windows)
+        if: runner.os == 'Windows'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2022_64'
+          cache: true
+
+      # The Ninja generator needs cl.exe on PATH, which requires the MSVC
+      # developer environment to be activated.
+      - name: Set up MSVC environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # Compiler caching: ccache hashes preprocessor output + flags and returns
+      # the cached object on a hit, so an unchanged TU recompiles in
+      # milliseconds. ccache 4.x supports MSVC, so one setup covers all three
+      # platforms; CMake is pointed at it via CMAKE_*_COMPILER_LAUNCHER below.
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ matrix.os }}
+          max-size: 500M
+
+      - name: Configure (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          # macOS: point CMake at the brewed Qt/OSG and the MyGUI we built
+          # above. Linux gets everything from apt, so it needs no extra hints.
+          # An array, not a string: CMAKE_PREFIX_PATH is a ;-separated list, and
+          # word-splitting a bare string containing ';' is asking for trouble.
+          EXTRA_ARGS=()
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            EXTRA_ARGS+=("-DCMAKE_PREFIX_PATH=$(brew --prefix qt);$(brew --prefix open-scene-graph);$RUNNER_TEMP/mygui-install")
+            # cmake/FindMyGUI.cmake hints off $ENV{MYGUI_HOME} -- an environment
+            # variable, so a -DMYGUI_HOME= would be silently ignored.
+            export MYGUI_HOME="$RUNNER_TEMP/mygui-install"
+          fi
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DBUILD_LAUNCHER=ON \
+            "${EXTRA_ARGS[@]}"
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache `
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache `
+            -DBUILD_LAUNCHER=ON `
+            -DCMAKE_TOOLCHAIN_FILE="$env:USERPROFILE\vcpkg\scripts\buildsystems\vcpkg.cmake"
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      # opendf has no test suite yet, so the build itself is the check. Once
+      # tests land, add a ctest step here.
+
+      # Keep the binaries from each platform so a PR can be smoke-tested
+      # without rebuilding locally.
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: opendf-${{ matrix.os }}
+          path: |
+            build/opendf
+            build/bsatool
+            build/opendf-launcher
+            build/opendf.exe
+            build/bsatool.exe
+            build/opendf-launcher.exe
+          if-no-files-found: warn
