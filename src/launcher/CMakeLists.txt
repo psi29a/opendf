@@ -4,7 +4,7 @@
 # find_package picks up Ubuntu/Debian qt6-base-dev, Homebrew qt6, and the
 # official Qt SDK on Windows.
 
-find_package(Qt6 6.5 COMPONENTS Widgets REQUIRED)
+find_package(Qt6 6.2 COMPONENTS Widgets REQUIRED)
 
 set(CMAKE_AUTOMOC ON)
 
@@ -52,29 +52,26 @@ target_compile_definitions(opendf-launcher PRIVATE
 install(TARGETS opendf-launcher RUNTIME DESTINATION bin)
 
 
-# Optional: build innoextract alongside the launcher.
+# innoextract, built alongside the launcher.
 #
 # The launcher shells out to innoextract to unpack DaggerfallSetup, which is an
-# Inno Setup installer. Distro packages are all innoextract 1.9 (2020), which
-# only understands Inno Setup up to 6.0.5 and fails on current DaggerfallSetup
-# builds (6.6.x); the fix lives in a fork until it is upstreamed. Turning this
-# on builds that fork next to the launcher, so a working innoextract is found
-# without touching the system.
+# Inno Setup installer. There is no usable system innoextract to fall back on:
+# every release is 1.9 (2020), which stops at Inno Setup 6.0.5, and current
+# DaggerfallSetup builds are made with 6.6.x, so a distro innoextract simply
+# refuses the file. That makes this a hard dependency of the launcher rather
+# than an option -- without it "install from archive" only works via the slow
+# Wine path -- so it is built unconditionally, and only when the launcher is
+# (this whole directory is behind BUILD_LAUNCHER).
 #
-# It is off by default because innoextract pulls in Boost, liblzma and iconv,
-# which most people building just the engine do not want. Without it the
-# launcher still finds an innoextract on PATH, and falls back to Wine.
-option(BUILD_INNOEXTRACT "Build a bundled innoextract for the launcher" OFF)
-
-# Which innoextract to build. This points at a fork rather than upstream
-# because no released innoextract can read the installer DaggerfallSetup now
-# ships: the only release (1.9, 2020) stops at Inno Setup 6.0.5, upstream
-# master reaches 6.4.0, and DaggerfallSetup 3.2.0 is built with 6.6.1. The
-# branch adds 6.4-6.6 support and is filed upstream as dscharrer/innoextract#214
-# -- switch these back to upstream once that lands.
+# Drop this once 6.4-6.6 support is released upstream and distros carry it.
+#
+# It points at a fork for that same reason: upstream master reaches 6.4.0 and
+# DaggerfallSetup 3.2.0 needs 6.6.1. The branch adds 6.4-6.6 support and is
+# filed upstream as dscharrer/innoextract#214 -- switch back to upstream once
+# that lands.
 set(INNOEXTRACT_REPOSITORY "https://github.com/psi29a/innoextract.git"
     CACHE STRING "Git repository to fetch innoextract from")
-#
+
 # Pinned to a commit rather than the branch name: this is source we fetch and
 # compile at configure time, so a moving ref means the code built here can
 # change without anything in this repo changing. Bump it deliberately after
@@ -82,31 +79,29 @@ set(INNOEXTRACT_REPOSITORY "https://github.com/psi29a/innoextract.git"
 set(INNOEXTRACT_TAG "4bbe109f18419a3c68faeb013d7ae67330a4296c"
     CACHE STRING "Git tag/branch/commit of innoextract to build")
 
-if(BUILD_INNOEXTRACT)
-    include(FetchContent)
+include(FetchContent)
 
-    # innoextract installs its own binary, man page and completions; we only
-    # want the executable, staged beside the launcher.
-    set(INNOEXTRACT_SKIP_INSTALL ON CACHE BOOL "" FORCE)
+# innoextract installs its own binary, man page and completions; we only
+# want the executable, staged beside the launcher.
+set(INNOEXTRACT_SKIP_INSTALL ON CACHE BOOL "" FORCE)
 
-    # GIT_SHALLOW is deliberately off: it fetches only the tip of a ref, which
-    # cannot satisfy a full commit SHA. UPDATE_DISCONNECTED skips the re-fetch
-    # on reconfigure, which is safe precisely because the ref is immutable --
-    # if you point INNOEXTRACT_TAG at a branch instead, turn both back around.
-    FetchContent_Declare(innoextract
-        GIT_REPOSITORY   "${INNOEXTRACT_REPOSITORY}"
-        GIT_TAG          "${INNOEXTRACT_TAG}"
-        UPDATE_DISCONNECTED TRUE
+# GIT_SHALLOW is deliberately off: it fetches only the tip of a ref, which
+# cannot satisfy a full commit SHA. UPDATE_DISCONNECTED skips the re-fetch
+# on reconfigure, which is safe precisely because the ref is immutable --
+# if you point INNOEXTRACT_TAG at a branch instead, turn both back around.
+FetchContent_Declare(innoextract
+    GIT_REPOSITORY   "${INNOEXTRACT_REPOSITORY}"
+    GIT_TAG          "${INNOEXTRACT_TAG}"
+    UPDATE_DISCONNECTED TRUE
+)
+FetchContent_MakeAvailable(innoextract)
+
+if(TARGET innoextract)
+    # Sit beside the launcher so QStandardPaths::findExecutable finds it
+    # from the application directory at runtime.
+    set_target_properties(innoextract PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${opendf_BINARY_DIR}"
     )
-    FetchContent_MakeAvailable(innoextract)
-
-    if(TARGET innoextract)
-        # Sit beside the launcher so QStandardPaths::findExecutable finds it
-        # from the application directory at runtime.
-        set_target_properties(innoextract PROPERTIES
-            RUNTIME_OUTPUT_DIRECTORY "${opendf_BINARY_DIR}"
-        )
-        add_dependencies(opendf-launcher innoextract)
-        install(PROGRAMS "$<TARGET_FILE:innoextract>" DESTINATION bin)
-    endif()
+    add_dependencies(opendf-launcher innoextract)
+    install(PROGRAMS "$<TARGET_FILE:innoextract>" DESTINATION bin)
 endif()

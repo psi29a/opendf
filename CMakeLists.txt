@@ -38,6 +38,13 @@ else()
     endif()
 endif()
 
+# macOS deprecated the whole OpenGL API in 10.14. We know, and OSG's headers
+# pull it in on every translation unit that touches osg/GL, which buries real
+# warnings under hundreds of these. Apple's own opt-out.
+if(APPLE)
+    add_definitions("-DGL_SILENCE_DEPRECATION")
+endif()
+
 
 # AUTO builds the launcher when Qt6 is available and quietly skips it when it
 # isn't, so configuring the engine alone doesn't fail on a machine with no Qt6
@@ -47,11 +54,11 @@ set(BUILD_LAUNCHER AUTO CACHE STRING "Build the OpenDF launcher (ON/OFF/AUTO)")
 set_property(CACHE BUILD_LAUNCHER PROPERTY STRINGS AUTO ON OFF)
 
 if(BUILD_LAUNCHER STREQUAL "AUTO")
-    find_package(Qt6 6.5 QUIET COMPONENTS Widgets)
+    find_package(Qt6 6.2 QUIET COMPONENTS Widgets)
     if(Qt6_FOUND)
         set(BUILD_LAUNCHER ON)
     else()
-        message(STATUS "Qt6 6.5 Widgets not found -- not building the launcher")
+        message(STATUS "Qt6 Widgets not found -- not building the launcher")
         set(BUILD_LAUNCHER OFF)
     endif()
 endif()

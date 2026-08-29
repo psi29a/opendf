@@ -36,13 +36,17 @@ jobs:
       - uses: actions/checkout@v4
 
       # Everything opendf needs is packaged in Debian/Ubuntu, launcher included.
+      # Boost and liblzma are for the innoextract the launcher builds alongside
+      # itself (src/launcher/CMakeLists.txt).
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y cmake ninja-build build-essential \
             libopenscenegraph-dev libmygui-dev libsdl2-dev \
-            libgl1-mesa-dev qt6-base-dev
+            libgl1-mesa-dev qt6-base-dev \
+            libboost-iostreams-dev libboost-filesystem-dev \
+            libboost-date-time-dev libboost-program-options-dev liblzma-dev
 
       # Homebrew has open-scene-graph and qt, but:
       #   * no mygui formula at all -- it has to be built from source (below)
@@ -52,7 +56,8 @@ jobs:
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install cmake ninja open-scene-graph sdl2-compat qt freetype
+          brew install cmake ninja open-scene-graph sdl2-compat qt freetype \
+            boost xz
 
       # MyGUI from source, since Homebrew dropped it. Only MyGUIEngine is
       # needed: opendf brings its own OSG-backed RenderManager/DataManager
@@ -102,9 +107,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/vcpkg
-          key: vcpkg-${{ runner.os }}-v1-osg-mygui-sdl2
+          key: vcpkg-${{ runner.os }}-v2-osg-mygui-sdl2-boost-lzma
           restore-keys: |
-            vcpkg-${{ runner.os }}-v1-
+            vcpkg-${{ runner.os }}-v2-
 
       # cmake, ninja and git are preinstalled on the windows-latest image, so we
       # only need vcpkg. Qt6 comes from install-qt-action below rather than
@@ -115,7 +120,9 @@ jobs:
         run: |
           git clone https://github.com/microsoft/vcpkg.git $env:USERPROFILE\vcpkg
           & "$env:USERPROFILE\vcpkg\bootstrap-vcpkg.bat"
-          & "$env:USERPROFILE\vcpkg\vcpkg.exe" install osg mygui sdl2 --triplet x64-windows
+          & "$env:USERPROFILE\vcpkg\vcpkg.exe" install osg mygui sdl2 `
+              boost-iostreams boost-filesystem boost-date-time boost-program-options `
+              liblzma --triplet x64-windows
 
       # Ensure Ninja is on PATH for later steps. (gha-setup-ninja registers it
       # via $GITHUB_PATH, which -- unlike choco -- propagates across steps.)

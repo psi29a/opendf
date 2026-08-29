@@ -28,7 +28,7 @@ Libraries:
 * MyGUI          -- in-game GUI and console
 * SDL2           -- windowing and input
 * OpenGL
-* Qt 6 >= 6.5    -- the launcher only; skipped automatically when absent
+* Qt 6 >= 6.2    -- the launcher only; skipped automatically when absent
 
 ### Installing dependencies
 
@@ -82,10 +82,9 @@ This produces the engine (`opendf`) and a BSA archive tool (`bsatool`) in
 Useful CMake options (defaults in parentheses):
 
     -DBUILD_LAUNCHER=AUTO|ON|OFF build the Qt6 launcher (AUTO)
-    -DBUILD_INNOEXTRACT=ON|OFF   build a bundled innoextract (OFF)
     -DMYGUI_DONT_USE_OBSOLETE=AUTO|ON|OFF  match how MyGUI was built (AUTO)
 
-`BUILD_LAUNCHER=AUTO` builds the launcher if Qt6 6.5 is installed and skips it
+`BUILD_LAUNCHER=AUTO` builds the launcher if Qt6 6.2+ is installed and skips it
 otherwise, so an engine-only build needs no Qt6. Pass `ON` to require it (the
 build then fails if Qt6 is missing) or `OFF` to never build it.
 
@@ -101,12 +100,13 @@ that header and cause the very mismatch it prevents. Older MyGUI records
 nothing, so `AUTO` falls back to defining it, which matches the Debian/Ubuntu
 packages. Force `ON`/`OFF` only for a pre-3.5 MyGUI built some other way.
 
-`BUILD_INNOEXTRACT` is for the launcher's "install from archive" support. The
-launcher shells out to `innoextract` to unpack DaggerfallSetup, but every
-released innoextract (1.9, 2020) is too old to read the Inno Setup version it
-now ships with; turning this on builds a patched fork alongside the launcher.
-It is off by default because it pulls in Boost, liblzma and iconv. Without it
-the launcher still uses an `innoextract` on `PATH`, and falls back to Wine.
+Building the launcher also builds `innoextract`, which it uses to unpack
+DaggerfallSetup for "install from archive". This is not optional: every
+released innoextract (1.9, 2020) stops at Inno Setup 6.0.5, while current
+DaggerfallSetup builds are made with 6.6.x, so a system innoextract simply
+refuses the file. It is fetched from a fork carrying 6.4-6.6 support, pinned
+to a reviewed commit, and pulls in Boost, liblzma and iconv. Once that support
+is released upstream and distros carry it, this goes away.
 
 Tip: to flip an option on an existing build directory, re-run cmake on it
 (e.g. `cmake build -DBUILD_LAUNCHER=OFF`) or delete `build/CMakeCache.txt`.

@@ -19,7 +19,6 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QProcess>
-#include <QProcessEnvironment>
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -685,17 +684,12 @@ QString MainWindow::installGameData(const QString &archivePath,
         return dest;
     }
 
-    // An Inno Setup installer. Two ways to unpack it, tried in order:
-    //
-    //  1. innoextract -- fast, no Windows involved, but every released
-    //     version (1.9, 2020) only understands Inno Setup up to 6.0.5, and
-    //     current DaggerfallSetup builds are made with 6.6.x. So check the
-    //     two version numbers up front rather than letting it fail with
-    //     "Could not determine setup data version!".
-    //  2. Wine, running the installer silently -- slower, but it copes with
-    //     any Inno version because it's the real installer doing the work.
-    //
-    // Whichever runs, the result is validated the same way below.
+    // An Inno Setup installer: unpack it with innoextract. We build a current
+    // one beside the launcher (see src/launcher/CMakeLists.txt) precisely
+    // because no released version can read these files -- 1.9 (2020) stops at
+    // Inno Setup 6.0.5 and DaggerfallSetup is built with 6.6.x. findInnoextract
+    // prefers that bundled copy, so the version check below only bites when
+    // someone runs the launcher against an older innoextract off PATH.
     const QString fileName = QFileInfo(payload).fileName();
     const QString setupVersion = innoSetupVersion(payload);
 
@@ -705,7 +699,8 @@ QString MainWindow::installGameData(const QString &archivePath,
     const QString inno = findInnoextract();
     if(inno.isEmpty())
     {
-        innoNote = tr("innoextract is not installed.");
+        innoNote = tr("No innoextract found — it should have been built and "
+                      "installed alongside this launcher.");
     }
     else
     {
@@ -732,103 +727,6 @@ QString MainWindow::installGameData(const QString &archivePath,
         }
     }
 
-    if(!extracted)
-    {
-        const QString wine = QStandardPaths::findExecutable(QStringLiteral("wine"));
-        if(!wine.isEmpty())
-        {
-            // Silent install into a throwaway prefix inside destRoot, so we
-            // never touch the user's own ~/.wine. /DIR must be a Windows path;
-            // C:\DF maps to <prefix>/drive_c/DF.
-            const QString prefix = destRoot + QStringLiteral("/.wineprefix");
-            QDir(prefix).removeRecursively();
-            QDir().mkpath(prefix);
-
-            QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-            env.insert(QStringLiteral("WINEPREFIX"), prefix);
-            env.insert(QStringLiteral("WINEDEBUG"), QStringLiteral("-all"));
-
-            stage(tr("Running the installer with Wine — this takes a few "
-                     "minutes…"));
-
-            QProcess p;
-            p.setProcessEnvironment(env);
-            p.setProcessChannelMode(QProcess::MergedChannels);
-            p.start(wine, {payload,
-                           QStringLiteral("/VERYSILENT"),
-                           QStringLiteral("/SUPPRESSMSGBOXES"),
-                           QStringLiteral("/NORESTART"),
-                           QStringLiteral("/DIR=C:\\DF")});
-            bool wineOk = p.waitForStarted(60 * 1000);
-            if(wineOk)
-            {
-                QElapsedTimer wineElapsed;
-                wineElapsed.start();
-                while(p.state() != QProcess::NotRunning)
-                {
-                    p.waitForFinished(100);
-                    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-                    if(canceled() || wineElapsed.hasExpired(EXTRACT_TIMEOUT_MS))
-                    {
-                        p.kill();
-                        p.waitForFinished(5000);
-                        wineOk = false;
-                        break;
-                    }
-                }
-            }
-            if(wineOk)
-            {
-                // Wine's exit code isn't a reliable success signal here, so
-                // judge by whether the game data actually appeared.
-                const QString installed = findArena2(prefix + QStringLiteral("/drive_c/DF"));
-                if(!installed.isEmpty())
-                {
-                    // Lift the data out of the prefix, then bin the prefix --
-                    // it's ~400 MB of Windows scaffolding we have no use for.
-                    const QString dest = destRoot + QStringLiteral("/ARENA2");
-                    QDir(dest).removeRecursively();
-                    QDir().mkpath(dest);
-                    stage(tr("Copying game files…"));
-                    QDirIterator it(installed, QDir::Files);
-                    bool copied = true;
-                    int n = 0;
-                    while(it.hasNext())
-                    {
-                        const QString src = it.next();
-                        if(!QFile::copy(src, dest + QLatin1Char('/') + it.fileName()))
-                        {
-                            copied = false;
-                            break;
-                        }
-                        // ~1500 files; repaint every so often, not per file.
-                        if((++n % 100) == 0)
-                            stage(tr("Copying game files… (%1)").arg(n));
-                    }
-                    stage(tr("Cleaning up…"));
-                    QDir(prefix).removeRecursively();
-                    extracted = copied;
-                    if(!copied)
-                        innoNote += tr("\n\nWine installed the game, but copying "
-                                       "the files into %1 failed.").arg(dest);
-                }
-                else
-                {
-                    QDir(prefix).removeRecursively();
-                    innoNote += tr("\n\nWine ran the installer but produced no "
-                                   "game data.");
-                }
-            }
-            else
-            {
-                p.kill();
-                p.waitForFinished(5000);
-                QDir(prefix).removeRecursively();
-                innoNote += tr("\n\nWine did not finish in time.");
-            }
-        }
-    }
-
     if(canceled())
     {
         *err = tr("Cancelled.");
@@ -839,15 +737,11 @@ QString MainWindow::installGameData(const QString &archivePath,
     {
         *err = tr("Could not unpack the Windows installer %1.\n\n%2\n\n"
                   "Ways forward:\n\n"
-                  "• Rebuild OpenDF with <b>-DBUILD_INNOEXTRACT=ON</b> — that "
-                  "builds a current innoextract next to the launcher, which "
-                  "reads the Inno Setup 6.6 installers the packaged versions "
-                  "cannot.\n\n"
-                  "• Or install <b>Wine</b> and try again — the launcher will "
-                  "run the installer with it automatically, which works with "
-                  "any Inno Setup version.\n\n"
+                  "• Make sure you are running the innoextract built alongside "
+                  "this launcher rather than an older one from your system — "
+                  "released versions cannot read Inno Setup 6.6 installers.\n\n"
                   "• Or install the game yourself (GOG, Steam, or this "
-                  "installer under Wine/Windows) and point the launcher at the "
+                  "installer on Windows) and point the launcher at the "
                   "resulting ARENA2 folder.")
                .arg(fileName, innoNote.trimmed());
         return {};

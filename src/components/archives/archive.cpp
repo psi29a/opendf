@@ -58,7 +58,9 @@ ConstrainedFileStreamBuf::pos_type ConstrainedFileStreamBuf::seekoff(off_type of
     // Clear read pointers so underflow() gets called on the next read attempt.
     setg(0, 0, 0);
 
-    return newPos - mStart;
+    // Convert through off_type: pos_type is fpos<mbstate_t>, and mixing it
+    // directly with streamsize is ambiguous under libc++.
+    return pos_type(off_type(newPos - mStart));
 }
 
 ConstrainedFileStreamBuf::pos_type ConstrainedFileStreamBuf::seekpos(pos_type pos, std::ios_base::openmode mode)
@@ -66,10 +68,11 @@ ConstrainedFileStreamBuf::pos_type ConstrainedFileStreamBuf::seekpos(pos_type po
     if((mode&std::ios_base::out) || !(mode&std::ios_base::in))
         return traits_type::eof();
 
-    if(pos < 0 || pos > (mEnd-mStart))
+    const off_type off = off_type(pos);
+    if(off < 0 || off > off_type(mEnd - mStart))
         return traits_type::eof();
 
-    if(!mFile->seekg(pos + mStart))
+    if(!mFile->seekg(off + off_type(mStart)))
         return traits_type::eof();
 
     // Clear read pointers so underflow() gets called on the next read attempt.
