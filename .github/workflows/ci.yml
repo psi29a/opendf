@@ -14,6 +14,9 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    # Default is 6 hours. Nothing here should take more than a fraction of
+    # that, and a stuck job should fail fast rather than hold a runner.
+    timeout-minutes: 90
     # Persist vcpkg's built packages in the GitHub Actions cache so dependencies
     # are built from source only once, then restored on later runs.
     env:
@@ -118,28 +121,49 @@ jobs:
       # hashFiles() over this workflow, so unrelated CI edits don't throw away a
       # large, perfectly good cache. x-gha still helps on a miss by restoring
       # per-package binaries instead of rebuilding them.
+      # restore + a separate always-run save (rather than actions/cache, which
+      # only saves at the end of a SUCCESSFUL job): a run that fails or times
+      # out mid-install would otherwise cache nothing, and the next run would
+      # start from zero again.
       - name: Cache vcpkg
         if: runner.os == 'Windows'
         id: cache-vcpkg
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ~/vcpkg
-          key: vcpkg-${{ runner.os }}-v2-osg-mygui-sdl2-boost-lzma
+          key: vcpkg-${{ runner.os }}-v3-osgcore-mygui-sdl2-boost-lzma
           restore-keys: |
-            vcpkg-${{ runner.os }}-v2-
+            vcpkg-${{ runner.os }}-v3-
 
       # cmake, ninja and git are preinstalled on the windows-latest image, so we
       # only need vcpkg. Qt6 comes from install-qt-action below rather than
       # vcpkg's qtbase, which is a 45+ minute from-source build.
+      #
+      # osg[core]: osg's default features (plugins, openexr, nvtt, fontconfig)
+      # exist for GIS and film formats we never touch, and drag in gdal, hdf5,
+      # netcdf, proj, openssl, libpq and friends -- 119 ports in the transitive
+      # closure against 68 without them, all built from source on a cache miss.
+      # We only load PNG (the three MyGUI skin images; Daggerfall's own art
+      # comes out of the BSAs via our loader) and need freetype for text, so
+      # ask for exactly those.
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows' && steps.cache-vcpkg.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           git clone https://github.com/microsoft/vcpkg.git $env:USERPROFILE\vcpkg
           & "$env:USERPROFILE\vcpkg\bootstrap-vcpkg.bat"
-          & "$env:USERPROFILE\vcpkg\vcpkg.exe" install osg mygui sdl2 `
+          & "$env:USERPROFILE\vcpkg\vcpkg.exe" install osg[core] freetype libpng mygui sdl2 `
               boost-iostreams boost-filesystem boost-date-time boost-program-options `
               liblzma --triplet x64-windows
+
+      # Save whatever vcpkg produced, even if a later step fails, so progress
+      # is never thrown away. always() also covers the cancelled/timed-out case.
+      - name: Save vcpkg cache
+        if: always() && runner.os == 'Windows' && steps.cache-vcpkg.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/vcpkg
+          key: ${{ steps.cache-vcpkg.outputs.cache-primary-key }}
 
       # Ensure Ninja is on PATH for later steps. (gha-setup-ninja registers it
       # via $GITHUB_PATH, which -- unlike choco -- propagates across steps.)
