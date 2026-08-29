@@ -18,6 +18,12 @@ jobs:
     # are built from source only once, then restored on later runs.
     env:
       VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+      # Hash the relative path, not the absolute one: CMake bakes the build
+      # directory into some generated sources (innoextract's autogen files
+      # among them), which would otherwise miss whenever the path moves.
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_SLOPPINESS: "locale,time_macros,include_file_ctime,include_file_mtime"
     strategy:
       # One platform failing shouldn't hide results from the other two.
       fail-fast: false
@@ -59,6 +65,17 @@ jobs:
           brew install cmake ninja open-scene-graph sdl2-compat qt freetype \
             boost xz
 
+      # Cache the installed MyGUI tree so the source build below only happens
+      # when the version changes. The key carries the tag, so bumping
+      # MyGUI3.4.4 automatically misses and rebuilds.
+      - name: Cache MyGUI (macOS)
+        if: runner.os == 'macOS'
+        id: cache-mygui
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/mygui-install
+          key: mygui-${{ runner.os }}-MyGUI3.4.4
+
       # MyGUI from source, since Homebrew dropped it. Only MyGUIEngine is
       # needed: opendf brings its own OSG-backed RenderManager/DataManager
       # (src/opendf/gui/gui.cpp) rather than using a MyGUI render platform,
@@ -68,7 +85,7 @@ jobs:
       # MYGUI_RENDERSYSTEM=1 is the "Dummy" platform. The default is 3 (Ogre),
       # which would drag in an Ogre dependency we have no use for.
       - name: Build MyGUI from source (macOS)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && steps.cache-mygui.outputs.cache-hit != 'true'
         run: |
           git clone --depth 1 --branch MyGUI3.4.4 \
             https://github.com/MyGUI/mygui.git "$RUNNER_TEMP/mygui"
@@ -152,11 +169,16 @@ jobs:
       # the cached object on a hit, so an unchanged TU recompiles in
       # milliseconds. ccache 4.x supports MSVC, so one setup covers all three
       # platforms; CMake is pointed at it via CMAKE_*_COMPILER_LAUNCHER below.
+      # This also covers the innoextract the launcher builds -- FetchContent
+      # puts it under build/_deps in the same tree, so the launcher applies.
+      #
+      # 1G rather than the default: the engine, the launcher and innoextract
+      # all share this cache.
       - name: Set up ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ matrix.os }}
-          max-size: 500M
+          max-size: 1G
 
       - name: Configure (Linux/macOS)
         if: runner.os != 'Windows'
