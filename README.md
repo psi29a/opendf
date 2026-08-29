@@ -1,6 +1,6 @@
 # OpenDF
 
-An open source engine for Bethesda's *The Elder Scrolls II: Daggerfall*.
+An open-source engine for Bethesda's *The Elder Scrolls II: Daggerfall*.
 
 OpenDF ships no game assets. You need your own copy of the original game data
 -- Daggerfall is available for free from Bethesda, and the launcher will point
@@ -48,10 +48,16 @@ OSG-backed render manager, so the engine alone is enough:
 
     git clone --depth 1 --branch MyGUI3.4.4 https://github.com/MyGUI/mygui.git
     cmake -S mygui -B mygui/build -DCMAKE_INSTALL_PREFIX=$HOME/mygui-install \
+        -DMYGUI_DONT_USE_OBSOLETE=ON \
         -DMYGUI_RENDERSYSTEM=1 -DMYGUI_BUILD_DEMOS=OFF -DMYGUI_BUILD_TOOLS=OFF \
         -DMYGUI_BUILD_PLUGINS=OFF -DMYGUI_BUILD_DOCS=OFF
     cmake --build mygui/build --target install
     export MYGUI_HOME=$HOME/mygui-install
+
+`MYGUI_DONT_USE_OBSOLETE=ON` there is required, not tidiness: 3.4.4 defaults it
+to `FALSE` and installs no `MyGUI_Config.h`, so opendf's `AUTO` detection treats
+it as a pre-3.5 MyGUI and defines the macro. Building the library without it
+would leave the two disagreeing about every widget's layout.
 
 And there is no `sdl2` formula any more: `sdl2-compat` replaces it, providing
 the same `sdl2.pc` and SDL2 headers on top of SDL3.

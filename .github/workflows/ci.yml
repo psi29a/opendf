@@ -46,6 +46,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Nothing here pushes back to the repository, so don't leave a
+          # credential in .git/config for the rest of the job to inherit.
+          persist-credentials: false
 
       # Everything opendf needs is packaged in Debian/Ubuntu, launcher included.
       # Boost and liblzma are for the innoextract the launcher builds alongside
@@ -80,7 +84,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/mygui-install
-          key: mygui-${{ runner.os }}-MyGUI3.4.4
+          # The -vN is ours: it must change whenever the cmake options below
+          # do, or a tree built with the old flags keeps being restored.
+          key: mygui-${{ runner.os }}-MyGUI3.4.4-v2-noobsolete
 
       # MyGUI from source, since Homebrew dropped it. Only MyGUIEngine is
       # needed: opendf brings its own OSG-backed RenderManager/DataManager
@@ -90,6 +96,12 @@ jobs:
       #
       # MYGUI_RENDERSYSTEM=1 is the "Dummy" platform. The default is 3 (Ogre),
       # which would drag in an Ogre dependency we have no use for.
+      #
+      # MYGUI_DONT_USE_OBSOLETE=ON is not optional: 3.4.4 defaults it to FALSE
+      # and ships no MyGUI_Config.h, so our AUTO detection sees a pre-3.5
+      # install and defines the macro. If the library were built the other way
+      # the two would disagree about every widget's layout -- which corrupts
+      # memory rather than failing to link. Build it to match.
       - name: Build MyGUI from source (macOS)
         if: runner.os == 'macOS' && steps.cache-mygui.outputs.cache-hit != 'true'
         run: |
@@ -99,6 +111,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/mygui-install" \
             -DMYGUI_RENDERSYSTEM=1 \
+            -DMYGUI_DONT_USE_OBSOLETE=ON \
             -DMYGUI_BUILD_DEMOS=OFF \
             -DMYGUI_BUILD_TOOLS=OFF \
             -DMYGUI_BUILD_PLUGINS=OFF \
@@ -196,7 +209,8 @@ jobs:
       # via $GITHUB_PATH, which -- unlike choco -- propagates across steps.)
       - name: Set up Ninja (Windows)
         if: runner.os == 'Windows'
-        uses: seanmiddleditch/gha-setup-ninja@master
+        # Pinned to v6 by SHA: @master is mutable, and this runs on our runner.
+        uses: seanmiddleditch/gha-setup-ninja@3b1f8f94a2f8254bd26914c4ab9474d4f0015f67 # v6
 
       # Prebuilt Qt6 for the launcher; sets Qt6_DIR + PATH so find_package(Qt6)
       # succeeds and BUILD_LAUNCHER=AUTO picks it up.
