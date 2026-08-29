@@ -20,7 +20,10 @@ jobs:
     # Persist vcpkg's built packages in the GitHub Actions cache so dependencies
     # are built from source only once, then restored on later runs.
     env:
-      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+      # OpenMW's prebuilt x64-windows vcpkg tree, used by the Windows job.
+      # Bump both together; the SHA512 is the one they publish alongside it.
+      OPENMW_DEPS_TAG: "2026-02-24"
+      OPENMW_DEPS_SHA512: "26175e781a4cfe4ca8a6e1b7d97ba899d15841e97d494b5fdc73d5ba0de8af8d65fa7b1cb9950a6568c3e0c59dd5d030c800a50481453179b1dab8032f6edfd9"
       # Hash the relative path, not the absolute one: CMake bakes the build
       # directory into some generated sources (innoextract's autogen files
       # among them), which would otherwise miss whenever the path moves.
@@ -104,66 +107,54 @@ jobs:
             -DMYGUI_BUILD_TEST_APP=OFF
           cmake --build "$RUNNER_TEMP/mygui/build" --target install
 
-      # Expose the GitHub Actions cache endpoint/token to vcpkg's x-gha binary
-      # source (set via VCPKG_BINARY_SOURCES above).
-      - name: Export GitHub Actions cache variables (Windows)
+      # Windows dependencies come prebuilt rather than compiled here.
+      #
+      # Building them with vcpkg meant ~119 ports from source (osg's default
+      # features alone drag in gdal, hdf5, netcdf, proj, openssl...), which ran
+      # for hours and never even reached the configure step. OpenMW hit the same
+      # wall and solved it by publishing a prebuilt x64-windows vcpkg tree; they
+      # use OSG and MyGUI just as we do, so it carries everything we need:
+      # openmw-osg (their OSG fork), MyGUI 3.4.3, SDL2, and the Boost components
+      # and lzma that innoextract wants.
+      #
+      # Pinned by tag and checked against the SHA512 they publish, so this is
+      # reproducible and a tampered or truncated download fails the job.
+      - name: Cache Windows dependencies
         if: runner.os == 'Windows'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-      # Cache the whole vcpkg tree (tool + installed/). On a hit we skip clone,
-      # bootstrap and install entirely -- osg alone is a long build from source.
-      # The key carries a MANUAL version (-vN): bump it when the install command
-      # below changes (new port, different triplet, ...). Deliberately not
-      # hashFiles() over this workflow, so unrelated CI edits don't throw away a
-      # large, perfectly good cache. x-gha still helps on a miss by restoring
-      # per-package binaries instead of rebuilding them.
-      # restore + a separate always-run save (rather than actions/cache, which
-      # only saves at the end of a SUCCESSFUL job): a run that fails or times
-      # out mid-install would otherwise cache nothing, and the next run would
-      # start from zero again.
-      - name: Cache vcpkg
-        if: runner.os == 'Windows'
-        id: cache-vcpkg
+        id: cache-deps
         uses: actions/cache/restore@v4
         with:
-          path: ~/vcpkg
-          key: vcpkg-${{ runner.os }}-v3-osgcore-mygui-sdl2-boost-lzma
-          restore-keys: |
-            vcpkg-${{ runner.os }}-v3-
+          path: ${{ github.workspace }}/deps
+          key: omw-deps-${{ env.OPENMW_DEPS_TAG }}
 
-      # cmake, ninja and git are preinstalled on the windows-latest image, so we
-      # only need vcpkg. Qt6 comes from install-qt-action below rather than
-      # vcpkg's qtbase, which is a 45+ minute from-source build.
-      #
-      # osg[core]: osg's default features (plugins, openexr, nvtt, fontconfig)
-      # exist for GIS and film formats we never touch, and drag in gdal, hdf5,
-      # netcdf, proj, openssl, libpq and friends -- 119 ports in the transitive
-      # closure against 68 without them, all built from source on a cache miss.
-      # We only load PNG (the three MyGUI skin images; Daggerfall's own art
-      # comes out of the BSAs via our loader) and need freetype for text, so
-      # ask for exactly those.
-      - name: Install dependencies (Windows)
-        if: runner.os == 'Windows' && steps.cache-vcpkg.outputs.cache-hit != 'true'
+      - name: Download prebuilt dependencies (Windows)
+        if: runner.os == 'Windows' && steps.cache-deps.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          git clone https://github.com/microsoft/vcpkg.git $env:USERPROFILE\vcpkg
-          & "$env:USERPROFILE\vcpkg\bootstrap-vcpkg.bat"
-          & "$env:USERPROFILE\vcpkg\vcpkg.exe" install osg[core] freetype libpng mygui sdl2 `
-              boost-iostreams boost-filesystem boost-date-time boost-program-options `
-              liblzma --triplet x64-windows
+          $tag = "${{ env.OPENMW_DEPS_TAG }}"
+          $name = "vcpkg-x64-windows-2022-$tag"
+          $url = "https://github.com/OpenMW/openmw-deps-build/releases/download/$tag/$name.7z"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\deps.7z"
 
-      # Save whatever vcpkg produced, even if a later step fails, so progress
-      # is never thrown away. always() also covers the cancelled/timed-out case.
-      - name: Save vcpkg cache
-        if: always() && runner.os == 'Windows' && steps.cache-vcpkg.outputs.cache-hit != 'true'
+          # Fail loudly on a tampered or truncated download rather than building
+          # against whatever arrived.
+          $expected = "${{ env.OPENMW_DEPS_SHA512 }}"
+          $actual = (Get-FileHash -Algorithm SHA512 "$env:RUNNER_TEMP\deps.7z").Hash.ToLower()
+          if ($actual -ne $expected.ToLower()) {
+            Write-Error "Checksum mismatch`nexpected $expected`ngot      $actual"
+            exit 1
+          }
+
+          New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\deps" | Out-Null
+          7z x -y "-o${{ github.workspace }}\deps" "$env:RUNNER_TEMP\deps.7z" | Out-Null
+
+      - name: Save Windows dependency cache
+        if: always() && runner.os == 'Windows' && steps.cache-deps.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: ~/vcpkg
-          key: ${{ steps.cache-vcpkg.outputs.cache-primary-key }}
+          path: ${{ github.workspace }}/deps
+          key: ${{ steps.cache-deps.outputs.cache-primary-key }}
 
       # Ensure Ninja is on PATH for later steps. (gha-setup-ninja registers it
       # via $GITHUB_PATH, which -- unlike choco -- propagates across steps.)
@@ -235,7 +226,7 @@ jobs:
             -DCMAKE_C_COMPILER_LAUNCHER=ccache `
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache `
             -DBUILD_LAUNCHER=ON `
-            -DCMAKE_TOOLCHAIN_FILE="$env:USERPROFILE\vcpkg\scripts\buildsystems\vcpkg.cmake"
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/deps/scripts/buildsystems/vcpkg.cmake"
 
       - name: Build
         run: cmake --build build --config Release
