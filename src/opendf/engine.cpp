@@ -14,6 +14,8 @@
 #include <SDL.h>
 #include <SDL_syswm.h>
 
+#include <cstdlib>
+
 #include <osgViewer/Viewer>
 #include <osgViewer/ViewerEventHandlers>
 #include <osgDB/Registry>
@@ -438,6 +440,17 @@ bool Engine::go(void)
         // -- it ignores the inherited SDL window and opens a second window of
         // its own.
         traits->windowingSystemPreference = "SDL2";
+
+        // OSG sizes a texture's mipmap chain from the power-of-two-rounded
+        // dimensions but allocates immutable storage at the true size, so every
+        // non-power-of-two texture asks glTexStorage3D for one level more than
+        // it can hold. The allocation fails and takes the image upload with it,
+        // leaving those textures black. Daggerfall's art is full of NPOT sizes,
+        // so opt out of immutable storage: OSG then uses glTexImage3D plus
+        // glGenerateMipmap, which keeps both the exact sizes and the mipmaps.
+        // Read by the GLExtensions constructor, so it must be set before the
+        // context initializes its extensions.
+        setenv("OSG_GL_TEXTURE_STORAGE", "OFF", 0);
 
         osg::ref_ptr<osg::GraphicsContext> gc = osg::GraphicsContext::createGraphicsContext(traits.get());
         if(!gc.valid()) throw std::runtime_error("Failed to create GraphicsContext");
