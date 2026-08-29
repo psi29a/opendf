@@ -64,6 +64,12 @@ install(TARGETS opendf-launcher RUNTIME DESTINATION bin)
 # launcher still finds an innoextract on PATH, and falls back to Wine.
 option(BUILD_INNOEXTRACT "Build a bundled innoextract for the launcher" OFF)
 
+# Which innoextract to build. This points at a fork rather than upstream
+# because no released innoextract can read the installer DaggerfallSetup now
+# ships: the only release (1.9, 2020) stops at Inno Setup 6.0.5, upstream
+# master reaches 6.4.0, and DaggerfallSetup 3.2.0 is built with 6.6.1. The
+# branch adds 6.4-6.6 support and is filed upstream as dscharrer/innoextract#214
+# -- switch these back to upstream once that lands.
 set(INNOEXTRACT_REPOSITORY "https://github.com/psi29a/innoextract.git"
     CACHE STRING "Git repository to fetch innoextract from")
 set(INNOEXTRACT_TAG "inno-6.6-loader-rev2"
@@ -76,10 +82,14 @@ if(BUILD_INNOEXTRACT)
     # want the executable, staged beside the launcher.
     set(INNOEXTRACT_SKIP_INSTALL ON CACHE BOOL "" FORCE)
 
+    # INNOEXTRACT_TAG names a branch, so re-check it on every configure --
+    # a shallow clone of a moving branch is otherwise pinned to whatever it
+    # first fetched. GIT_SHALLOW keeps that cheap.
     FetchContent_Declare(innoextract
-        GIT_REPOSITORY "${INNOEXTRACT_REPOSITORY}"
-        GIT_TAG        "${INNOEXTRACT_TAG}"
-        GIT_SHALLOW    TRUE
+        GIT_REPOSITORY   "${INNOEXTRACT_REPOSITORY}"
+        GIT_TAG          "${INNOEXTRACT_TAG}"
+        GIT_SHALLOW      TRUE
+        UPDATE_DISCONNECTED FALSE
     )
     FetchContent_MakeAvailable(innoextract)
 
