@@ -74,7 +74,12 @@ option(BUILD_INNOEXTRACT "Build a bundled innoextract for the launcher" OFF)
 # -- switch these back to upstream once that lands.
 set(INNOEXTRACT_REPOSITORY "https://github.com/psi29a/innoextract.git"
     CACHE STRING "Git repository to fetch innoextract from")
-set(INNOEXTRACT_TAG "inno-6.6-loader-rev2"
+#
+# Pinned to a commit rather than the branch name: this is source we fetch and
+# compile at configure time, so a moving ref means the code built here can
+# change without anything in this repo changing. Bump it deliberately after
+# reviewing what landed on the branch.
+set(INNOEXTRACT_TAG "4bbe109f18419a3c68faeb013d7ae67330a4296c"
     CACHE STRING "Git tag/branch/commit of innoextract to build")
 
 if(BUILD_INNOEXTRACT)
@@ -84,14 +89,14 @@ if(BUILD_INNOEXTRACT)
     # want the executable, staged beside the launcher.
     set(INNOEXTRACT_SKIP_INSTALL ON CACHE BOOL "" FORCE)
 
-    # INNOEXTRACT_TAG names a branch, so re-check it on every configure --
-    # a shallow clone of a moving branch is otherwise pinned to whatever it
-    # first fetched. GIT_SHALLOW keeps that cheap.
+    # GIT_SHALLOW is deliberately off: it fetches only the tip of a ref, which
+    # cannot satisfy a full commit SHA. UPDATE_DISCONNECTED skips the re-fetch
+    # on reconfigure, which is safe precisely because the ref is immutable --
+    # if you point INNOEXTRACT_TAG at a branch instead, turn both back around.
     FetchContent_Declare(innoextract
         GIT_REPOSITORY   "${INNOEXTRACT_REPOSITORY}"
         GIT_TAG          "${INNOEXTRACT_TAG}"
-        GIT_SHALLOW      TRUE
-        UPDATE_DISCONNECTED FALSE
+        UPDATE_DISCONNECTED TRUE
     )
     FetchContent_MakeAvailable(innoextract)
 

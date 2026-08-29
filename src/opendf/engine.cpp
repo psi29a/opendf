@@ -464,8 +464,14 @@ bool Engine::go(void)
         // so opt out of immutable storage: OSG then uses glTexImage3D plus
         // glGenerateMipmap, which keeps both the exact sizes and the mipmaps.
         // Read by the GLExtensions constructor, so it must be set before the
-        // context initializes its extensions.
-        setenv("OSG_GL_TEXTURE_STORAGE", "OFF", 0);
+        // context initializes its extensions. Overwrite unconditionally: an
+        // inherited OSG_GL_TEXTURE_STORAGE=ON would put the black textures
+        // back, and MSVC has no setenv().
+#ifdef _WIN32
+        _putenv_s("OSG_GL_TEXTURE_STORAGE", "OFF");
+#else
+        setenv("OSG_GL_TEXTURE_STORAGE", "OFF", 1);
+#endif
 
         osg::ref_ptr<osg::GraphicsContext> gc = osg::GraphicsContext::createGraphicsContext(traits.get());
         if(!gc.valid()) throw std::runtime_error("Failed to create GraphicsContext");

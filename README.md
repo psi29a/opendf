@@ -75,8 +75,9 @@ Windows (from a Developer Command Prompt, using the vcpkg toolchain):
         -DCMAKE_TOOLCHAIN_FILE=<path-to-vcpkg>\scripts\buildsystems\vcpkg.cmake
     cmake --build build
 
-This produces three binaries in `build/`: the engine (`opendf`), the launcher
-(`opendf-launcher`) and a BSA archive tool (`bsatool`).
+This produces the engine (`opendf`) and a BSA archive tool (`bsatool`) in
+`build/`, plus the launcher (`opendf-launcher`) when Qt6 was found -- see
+`BUILD_LAUNCHER` below.
 
 Useful CMake options (defaults in parentheses):
 
