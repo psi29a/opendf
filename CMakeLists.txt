@@ -37,10 +37,18 @@ else()
 endif()
 
 
+option(BUILD_LAUNCHER "Build the OpenDF launcher" ON)
+
 find_package(OpenSceneGraph REQUIRED osgDB osgViewer osgGA osgUtil)
 find_package(SDL2 REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(MyGUI REQUIRED)
+
+# MyGUI's EventPair is either a CompositeEvent (obsolete delegates enabled) or a
+# bare Event, depending on MYGUI_DONT_USE_OBSOLETE. That choice changes the layout
+# of every widget, so it must match how libMyGUIEngine itself was built or event
+# offsets silently disagree and attaching a delegate corrupts memory.
+add_definitions("-DMYGUI_DONT_USE_OBSOLETE")
 
 include_directories("${opendf_SOURCE_DIR}/src")
 
@@ -164,3 +172,8 @@ add_executable(bsatool ${SRCS} ${HDRS})
 
 
 install(TARGETS opendf bsatool RUNTIME DESTINATION bin)
+
+
+if(BUILD_LAUNCHER)
+    add_subdirectory(src/launcher)
+endif()

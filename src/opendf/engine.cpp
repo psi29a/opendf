@@ -432,6 +432,13 @@ bool Engine::go(void)
         traits->doubleBuffer = true;
         traits->inheritedWindowData = new SDLUtil::GraphicsWindowSDL2::WindowData(mSDLWindow);
 
+        // These traits describe the SDL window created above, so they're only
+        // meaningful to our SDL2 interface. With an empty preference OSG picks
+        // the *first* registered interface, which is osgViewer's native X11 one
+        // -- it ignores the inherited SDL window and opens a second window of
+        // its own.
+        traits->windowingSystemPreference = "SDL2";
+
         osg::ref_ptr<osg::GraphicsContext> gc = osg::GraphicsContext::createGraphicsContext(traits.get());
         if(!gc.valid()) throw std::runtime_error("Failed to create GraphicsContext");
         gc->getState()->setUseModelViewAndProjectionUniforms(true);
