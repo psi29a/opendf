@@ -51,3 +51,17 @@ libfind_process(MyGUI)
 if (MyGUI_Debug_FOUND)
     set(MyGUI_LIBRARIES optimized ${MyGUI_LIBRARIES} debug ${MyGUI_Debug_LIBRARIES})
 endif()
+
+# The search above locates MyGUI.h and so reports the directory holding the
+# headers themselves (.../include/MYGUI). Our sources include them prefixed --
+# <MYGUI/MyGUI_RenderManager.h> -- which needs the parent (.../include) on the
+# search path too. That happens to work on Linux, where the parent is /usr/include
+# and thus implicit, but not for a MyGUI installed anywhere else, so add it.
+if (MyGUI_INCLUDE_DIR)
+    get_filename_component(_mygui_include_parent "${MyGUI_INCLUDE_DIR}" DIRECTORY)
+    if (_mygui_include_parent)
+        list(APPEND MyGUI_INCLUDE_DIRS "${_mygui_include_parent}")
+        list(REMOVE_DUPLICATES MyGUI_INCLUDE_DIRS)
+    endif()
+    unset(_mygui_include_parent)
+endif()
