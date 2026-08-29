@@ -1,6 +1,8 @@
 
 #include "manager.hpp"
 
+#include <algorithm>
+
 #ifdef _WIN32
 #include "dirent.h"
 #include "misc/fnmatch.h"
@@ -74,6 +76,11 @@ void Manager::addDataPath(std::string&& path)
         path += "./";
     else if(path.back() != '/' && path.back() != '\\')
         path += "/";
+    // The same path routinely shows up in more than one settings.cfg (the
+    // launcher writes the user one, the build tree ships another), and every
+    // duplicate would be searched again on each file lookup.
+    if(std::find(gRootPaths.begin(), gRootPaths.end(), path) != gRootPaths.end())
+        return;
     gRootPaths.push_back(std::move(path));
 }
 
