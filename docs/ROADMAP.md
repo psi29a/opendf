@@ -87,6 +87,71 @@ but they are the difference between "works on my machine" and "behaves".
 `TODO` asking whether it actually means "procedurally texture this tile".
 Worth answering before terrain work starts in earnest.
 
+## Under consideration: moving the renderer to VSG
+
+Not scheduled, and deliberately so -- but worth writing down, because the
+question keeps coming up and the answer has changed.
+
+OpenSceneGraph is effectively unmaintained. That is not an abstract worry:
+two of the bugs fixed in this tree are OSG's, not ours -- it sizes a texture's
+mipmap chain from power-of-two-rounded dimensions while allocating storage at
+the true size (every non-power-of-two texture rendered black), and its
+windowing lookup returns the first registered interface rather than the one
+matching the traits (we opened a second, empty window). Both needed
+workarounds rather than fixes. There will be more.
+
+[VulkanSceneGraph](https://github.com/vsg-dev/VulkanSceneGraph) is the
+successor in spirit, by the same author, Vulkan-native and at a stable
+released API (1.1.x).
+
+**Supporting both is not on the table.** OSG is OpenGL and VSG is Vulkan;
+they are not two backends behind one interface. Doing both means two
+renderers, two shader sets and two GUI backends, for a project that is not yet
+a game. If the renderer moves, it moves.
+
+What a migration would actually cost, in this tree:
+
+* *Cheap, mechanical.* `osg::Vec*`/`Matrix`/`Quat` (~194 uses) and
+  `osg::ref_ptr` (~139) have direct VSG equivalents with the same
+  intrusive-refcount idiom.
+* *Cheap, mostly deletion.* The GUI backend. MyGUI 3.5 ships a Vulkan
+  platform (`MYGUI_RENDERSYSTEM=10`) that initialises from raw handles --
+  `VkInstance`, `VkPhysicalDevice`, `VkDevice`, queue family, `VkQueue` --
+  and VSG exposes exactly those via `Instance::vk()`, `PhysicalDevice::vk()`,
+  `Device::vk()` and `Queue::vk()`. Our own `src/components/mygui_osg/`
+  (~990 lines) would largely be deleted rather than ported. Note it is a
+  plain Vulkan platform, not a VSG-specific one, so it is not a bet on VSG.
+* *Cheap.* Windowing. SDL already creates Vulkan surfaces
+  (`SDL_Vulkan_CreateSurface`), in SDL2 as well as SDL3, so much of
+  `graphicswindow.cpp` (318 lines) stops being needed. Moving to SDL3 is a
+  separate decision on its own merits -- Vulkan support is not a reason for
+  it.
+* *Medium.* Scene assembly in `world/`, `class/` and `actions/`:
+  Group/Transform/Geometry map over reasonably.
+* **Expensive, and the real cost.** `src/opendf/render/pipeline.cpp` (364
+  lines) hand-builds a deferred G-buffer out of render-to-texture cameras
+  with explicit GL formats and render ordering; under VSG that becomes
+  explicit Vulkan render passes and descriptor sets.
+* **Expensive.** The 14 shaders in `data/shaders/` (347 lines) are
+  `#version 130` desktop GLSL using OSG's `osg_ModelViewMatrix`/`osg_Vertex`
+  built-ins. Vulkan GLSL needs explicit layouts, descriptor sets and push
+  constants. VSG bundles glslang so they can still be compiled from source
+  rather than shipped as SPIR-V, but they have to be rewritten.
+
+So the GUI and windowing arguments against moving have largely gone away; the
+pipeline and the shaders are what is left, and they are a rewrite of the
+rendering half of the project.
+
+Two things make this cheaper whenever it happens, and are worth doing anyway:
+keep rendering behind the `render/` seam so `world/` and `class/` do not reach
+for `osg::` directly, and keep shaders as external data files (they already
+are). A sensible trigger to revisit: once the game is actually playable, or
+when working around an OSG bug costs more than building the seam would.
+
+Separately and independently of any of this, MyGUI 3.5 is where MyGUI
+development now is -- 3.4.3 is what produced the ABI mismatch this tree works
+around -- so moving to it has value on its own.
+
 ## Beyond that
 
 Rough order of interest, deliberately vague -- these are directions, not
