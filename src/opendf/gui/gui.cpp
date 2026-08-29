@@ -403,6 +403,9 @@ void Gui::initialize(osgViewer::Viewer *viewer, osg::Group *sceneroot)
         throw;
     }
 
+    Log::get().stream()<< "  MyGUI "<<MYGUI_VERSION_MAJOR<<"."<<MYGUI_VERSION_MINOR
+                       <<"."<<MYGUI_VERSION_PATCH;
+
     MyGUI::PointerManager::getInstance().setVisible(false);
     mStatusMessages = mGui->createWidgetReal<MyGUI::TextBox>("TextBox",
         MyGUI::FloatCoord(0.f, 0.f, 1.f, .25f), MyGUI::Align::Default,

@@ -14,6 +14,7 @@
 #include <SDL.h>
 #include <SDL_syswm.h>
 
+#include <algorithm>
 #include <cstdlib>
 
 #include <osgViewer/Viewer>
@@ -23,6 +24,7 @@
 #include <osg/MatrixTransform>
 #include <osg/Depth>
 #include <osg/CullFace>
+#include <osg/Version>
 
 #include "components/sdlutil/graphicswindow.hpp"
 #include "components/vfs/manager.hpp"
@@ -317,6 +319,15 @@ bool Engine::go(void)
         sstr<< "SDL_Init Error: "<<SDL_GetError();
         throw std::runtime_error(sstr.str());
     }
+    {
+        // Report the runtime version, which is what actually matters when
+        // tracking down a bug -- it can differ from the headers we built with.
+        SDL_version sdlver;
+        SDL_GetVersion(&sdlver);
+        const char *driver = SDL_GetCurrentVideoDriver();
+        Log::get().stream()<< "  SDL "<<(int)sdlver.major<<"."<<(int)sdlver.minor<<"."
+                           <<(int)sdlver.patch<<" ("<<(driver ? driver : "no video driver")<<")";
+    }
 
     {
         std::string cfgname = getUserConfigDir() + "/opendf/opendf.cfg";
@@ -370,21 +381,25 @@ bool Engine::go(void)
         Log::get().stream()<< "  Setting root path "<<root_path<<"...";
         VFS::Manager::get().initialize(root_path.c_str());
 
+        // The same data path is routinely listed by more than one config file
+        // (the launcher writes the user's settings.cfg, the build tree ships
+        // its own), so only add -- and report -- each one once.
+        std::vector<std::string> data_paths;
         Settings::ConfigMultiEntryRange paths = cf.getMultiOptionRange("data");
         Settings::ConfigSection::const_iterator path = paths.first;
         for(;path != paths.second;++path)
-        {
-            Log::get().stream()<< "  Adding data path "<<path->second<<"...";
-            VFS::Manager::get().addDataPath(path->second.c_str());
-        }
-    }
+            data_paths.push_back(path->second);
+        for(const char *root : mRootPaths)
+            data_paths.push_back(root);
 
-    {
-        auto path = mRootPaths.begin();
-        for(;path != mRootPaths.end();++path)
+        std::vector<std::string> added;
+        for(std::string &dpath : data_paths)
         {
-            Log::get().stream()<< "  Adding data path "<<*path<<"...";
-            VFS::Manager::get().addDataPath(*path);
+            if(std::find(added.begin(), added.end(), dpath) != added.end())
+                continue;
+            Log::get().stream()<< "  Adding data path "<<dpath<<"...";
+            VFS::Manager::get().addDataPath(std::string(dpath));
+            added.push_back(dpath);
         }
     }
 
@@ -468,6 +483,8 @@ bool Engine::go(void)
     }
     SDL_ShowCursor(0);
 
+    Log::get().stream()<< "  OpenSceneGraph "<<osgGetVersion();
+
     Log::get().message("Initializing Texture Manager...");
     Resource::TextureManager::get().initialize();
 
@@ -519,6 +536,30 @@ bool Engine::go(void)
     viewer->requestContinuousUpdate();
     viewer->setLightingMode(osg::View::NO_LIGHT);
     viewer->realize();
+    {
+        // The GL strings can only be read with the context current, and the
+        // draw thread owns it after realize(). Hand the query to that thread
+        // as a GL operation rather than taking the context away from it.
+        struct LogGLInfo : public osg::GraphicsOperation {
+            LogGLInfo() : osg::GraphicsOperation("LogGLInfo", false) { }
+            void operator () (osg::GraphicsContext*) override
+            {
+                const GLubyte *glver = glGetString(GL_VERSION);
+                const GLubyte *glrend = glGetString(GL_RENDERER);
+                if(glver)
+                    Log::get().stream()<< "  OpenGL "<<reinterpret_cast<const char*>(glver)
+                                       <<" ["<<(glrend ? reinterpret_cast<const char*>(glrend)
+                                                       : "unknown renderer")<<"]";
+            }
+        };
+        if(osg::GraphicsContext *gc = mCamera->getGraphicsContext())
+        {
+            gc->add(new LogGLInfo());
+            // Pump one frame so the operation runs here, keeping the line with
+            // the rest of the startup banner instead of after the world loads.
+            viewer->frame();
+        }
+    }
 
     Log::get().message("Initializing GUI...");
     GuiIface::get().initialize(viewer, viewer->getSceneData()->asGroup());
