@@ -125,7 +125,12 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/deps
-          key: omw-deps-${{ env.OPENMW_DEPS_TAG }}
+          # -vN is ours, not upstream's: the tree we cache is their archive
+          # plus the Boost headers added below, so it has to change whenever
+          # that overlay does. Without it a cache written before the overlay
+          # existed keeps being restored, the add step is skipped as a
+          # cache hit, and the build fails on the very headers it adds.
+          key: omw-deps-${{ env.OPENMW_DEPS_TAG }}-v2-boost-format-ptrcontainer
 
       - name: Download prebuilt dependencies (Windows)
         if: runner.os == 'Windows' && steps.cache-deps.outputs.cache-hit != 'true'
@@ -155,12 +160,21 @@ jobs:
       # to build them. Taken at the boost-1.90.0 tag to match the Boost already
       # in the archive -- vcpkg's current ports are 1.92, and mixing versions
       # inside one Boost tree is asking for trouble.
+      #
+      # Runs on a cache hit too, skipping per-library only when the headers are
+      # already there. Gating the whole step on a cache miss meant a tree cached
+      # before this step existed was restored intact and the step skipped, so
+      # the build kept failing on exactly the headers this adds.
       - name: Add missing Boost headers (Windows)
-        if: runner.os == 'Windows' && steps.cache-deps.outputs.cache-hit != 'true'
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $inc = "${{ github.workspace }}\deps\installed\x64-windows\include"
           foreach ($lib in @("format", "ptr_container")) {
+            if (Test-Path "$inc\boost\$lib") {
+              Write-Host "boost/$lib already present"
+              continue
+            }
             $url = "https://github.com/boostorg/$lib/archive/refs/tags/boost-1.90.0.tar.gz"
             Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\$lib.tar.gz"
             tar -xzf "$env:RUNNER_TEMP\$lib.tar.gz" -C "$env:RUNNER_TEMP"
