@@ -17,7 +17,11 @@ ConstrainedFileStreamBuf::int_type ConstrainedFileStreamBuf::underflow()
 {
     if(gptr() == egptr())
     {
-        std::streamsize toread = std::min<std::streamsize>(mEnd-mFile->tellg(), mBuffer.size());
+        // off_type on both sides: mEnd is a streamsize and tellg() returns
+        // fpos<mbstate_t>, and mixing the two is ambiguous under libc++.
+        const std::streamsize left =
+            std::streamsize(off_type(mEnd) - off_type(mFile->tellg()));
+        std::streamsize toread = std::min<std::streamsize>(left, mBuffer.size());
         mFile->read(mBuffer.data(), toread);
         setg(mBuffer.data(), mBuffer.data(), mBuffer.data()+mFile->gcount());
     }
@@ -32,24 +36,27 @@ ConstrainedFileStreamBuf::pos_type ConstrainedFileStreamBuf::seekoff(off_type of
     if((mode&std::ios_base::out) || !(mode&std::ios_base::in))
         return traits_type::eof();
 
-    // new file position, relative to mOrigin
-    std::streampos newPos = traits_type::eof();
+    // New file position, relative to mOrigin. Kept as off_type (a plain
+    // integer) rather than streampos: pos_type is fpos<mbstate_t>, which
+    // defines its own arithmetic operators, so mixing it with streamsize is
+    // ambiguous under libc++ even though libstdc++ accepts it.
+    off_type newPos = 0;
     switch(whence)
     {
         case std::ios_base::beg:
-            newPos = offset + mStart;
+            newPos = offset + off_type(mStart);
             break;
         case std::ios_base::cur:
-            newPos = offset + mFile->tellg() - (egptr()-gptr());
+            newPos = offset + off_type(mFile->tellg()) - off_type(egptr()-gptr());
             break;
         case std::ios_base::end:
-            newPos = offset + mEnd;
+            newPos = offset + off_type(mEnd);
             break;
         default:
             return traits_type::eof();
     }
 
-    if(newPos < mStart || newPos > mEnd)
+    if(newPos < off_type(mStart) || newPos > off_type(mEnd))
         return traits_type::eof();
 
     if(!mFile->seekg(newPos))
@@ -58,9 +65,7 @@ ConstrainedFileStreamBuf::pos_type ConstrainedFileStreamBuf::seekoff(off_type of
     // Clear read pointers so underflow() gets called on the next read attempt.
     setg(0, 0, 0);
 
-    // Convert through off_type: pos_type is fpos<mbstate_t>, and mixing it
-    // directly with streamsize is ambiguous under libc++.
-    return pos_type(off_type(newPos - mStart));
+    return pos_type(newPos - off_type(mStart));
 }
 
 ConstrainedFileStreamBuf::pos_type ConstrainedFileStreamBuf::seekpos(pos_type pos, std::ios_base::openmode mode)

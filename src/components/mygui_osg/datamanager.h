@@ -1,6 +1,8 @@
 #ifndef COMPONENTS_MYGUI_OSG_DATAMANAGER_H
 #define COMPONENTS_MYGUI_OSG_DATAMANAGER_H
 
+#include <string>
+
 #include <MYGUI/MyGUI_DataManager.h>
 
 
@@ -36,7 +38,20 @@ public:
         @return Return full path to specified data.
         For example getDataPath("My.layout") might return "C:\path\to\project\data\My.layout"
     */
+    // MyGUI 3.4.3 changed this from returning const std::string& to returning
+    // std::string by value. Match whichever the headers we're building against
+    // declare, or the override is rejected as a conflicting return type.
+#if MYGUI_VERSION >= MYGUI_DEFINE_VERSION(3, 4, 3)
     virtual std::string getDataPath(const std::string &_name) const final;
+#else
+    virtual const std::string &getDataPath(const std::string &_name) const final;
+
+private:
+    // The pre-3.4.3 signature hands back a reference, so the result needs to
+    // outlive the call. MyGUI uses it immediately and single-threaded, which
+    // is the same contract its own implementations rely on.
+    mutable std::string mDataPath;
+#endif
 };
 
 } // namespace MyGUI_OSG

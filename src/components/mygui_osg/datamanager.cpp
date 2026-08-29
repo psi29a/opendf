@@ -31,7 +31,9 @@ public:
                 mStream->seekg(pos);
             }
         }
-        return mSize;
+        // Explicit hop through the offset type: converting fpos<mbstate_t>
+        // straight to size_t is ambiguous under libc++.
+        return size_t(std::streamoff(mSize));
     }
 
     virtual void readline(std::string &_source, MyGUI::Char _delim = '\n') final
@@ -84,6 +86,7 @@ const MyGUI::VectorString &DataManager::getDataListNames(const std::string &_pat
     return namelist;
 }
 
+#if MYGUI_VERSION >= MYGUI_DEFINE_VERSION(3, 4, 3)
 std::string DataManager::getDataPath(const std::string &_name) const
 {
     std::set<std::string> list = VFS::Manager::get().list(("*"+_name).c_str());
@@ -91,5 +94,15 @@ std::string DataManager::getDataPath(const std::string &_name) const
         return *list.begin();
     return std::string();
 }
+#else
+const std::string &DataManager::getDataPath(const std::string &_name) const
+{
+    // Returning a reference here, so the value has to live in the object
+    // rather than on the stack.
+    std::set<std::string> list = VFS::Manager::get().list(("*"+_name).c_str());
+    mDataPath = list.empty() ? std::string() : *list.begin();
+    return mDataPath;
+}
+#endif
 
 } // namespace MyGUI_OSG
