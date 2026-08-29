@@ -149,6 +149,28 @@ jobs:
           New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\deps" | Out-Null
           7z x -y "-o${{ github.workspace }}\deps" "$env:RUNNER_TEMP\deps.7z" | Out-Null
 
+      # innoextract needs boost/format and boost/ptr_container, which OpenMW
+      # has no use for and so left out of their tree. Both are header-only, so
+      # drop the headers in beside the rest rather than pulling vcpkg back in
+      # to build them. Taken at the boost-1.90.0 tag to match the Boost already
+      # in the archive -- vcpkg's current ports are 1.92, and mixing versions
+      # inside one Boost tree is asking for trouble.
+      - name: Add missing Boost headers (Windows)
+        if: runner.os == 'Windows' && steps.cache-deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $inc = "${{ github.workspace }}\deps\installed\x64-windows\include"
+          foreach ($lib in @("format", "ptr_container")) {
+            $url = "https://github.com/boostorg/$lib/archive/refs/tags/boost-1.90.0.tar.gz"
+            Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\$lib.tar.gz"
+            tar -xzf "$env:RUNNER_TEMP\$lib.tar.gz" -C "$env:RUNNER_TEMP"
+            Copy-Item -Recurse -Force "$env:RUNNER_TEMP\$lib-boost-1.90.0\include\boost\*" "$inc\boost\"
+          }
+          if (-not (Test-Path "$inc\boost\ptr_container\ptr_map.hpp")) {
+            Write-Error "boost/ptr_container headers did not land where expected"
+            exit 1
+          }
+
       - name: Save Windows dependency cache
         if: always() && runner.os == 'Windows' && steps.cache-deps.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
