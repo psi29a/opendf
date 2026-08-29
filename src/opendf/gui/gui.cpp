@@ -231,11 +231,19 @@ class Console {
                 {
                     sstr<< " "<<iter->first;
 
-                    size_t len = std::min(matching.length(), iter->first.length());
-                    auto nonmatch = std::mismatch(matching.begin(), matching.begin()+len, iter->first.begin(),
-                                                  std::equal_to<MyGUI::UString::value_type>()).first;
-                    if(nonmatch != matching.end())
-                        matching.erase(nonmatch, matching.end());
+                    // Shrink 'matching' to the longest prefix it shares with
+                    // this command. Indexed rather than std::mismatch on
+                    // UString::iterator: those iterators expose no
+                    // iterator_traits (no iterator_category, and
+                    // difference_type is protected), which the standard
+                    // algorithms require -- libstdc++ happens not to look,
+                    // MSVC's does and fails to compile.
+                    const size_t len = std::min(matching.length(), iter->first.length());
+                    size_t common = 0;
+                    while(common < len && matching[common] == iter->first[common])
+                        ++common;
+                    if(common < matching.length())
+                        matching.erase(matching.begin()+common, matching.end());
                 }
             }
 
