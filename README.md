@@ -28,7 +28,7 @@ Libraries:
 * MyGUI          -- in-game GUI and console
 * SDL2           -- windowing and input
 * OpenGL
-* Qt 6 >= 6.5    -- the launcher only; build with `-DBUILD_LAUNCHER=OFF` to skip
+* Qt 6 >= 6.5    -- the launcher only; skipped automatically when absent
 
 ### Installing dependencies
 
@@ -66,8 +66,20 @@ This produces three binaries in `build/`: the engine (`opendf`), the launcher
 
 Useful CMake options (defaults in parentheses):
 
-    -DBUILD_LAUNCHER=ON|OFF      build the Qt6 launcher (ON)
+    -DBUILD_LAUNCHER=AUTO|ON|OFF build the Qt6 launcher (AUTO)
     -DBUILD_INNOEXTRACT=ON|OFF   build a bundled innoextract (OFF)
+    -DMYGUI_DONT_USE_OBSOLETE=ON|OFF  match how MyGUI was built (ON)
+
+`BUILD_LAUNCHER=AUTO` builds the launcher if Qt6 6.5 is installed and skips it
+otherwise, so an engine-only build needs no Qt6. Pass `ON` to require it (the
+build then fails if Qt6 is missing) or `OFF` to never build it.
+
+`MYGUI_DONT_USE_OBSOLETE` has to agree with the `MYGUI_DONT_USE_OBSOLETE` the
+MyGUI you link against was built with -- it changes the layout of every widget,
+and a mismatch corrupts memory rather than failing to build. MyGUI installs
+nothing that records the choice, so it cannot be detected. The default `ON`
+matches the Debian/Ubuntu packages; set it to `OFF` for a MyGUI built with
+upstream's own default.
 
 `BUILD_INNOEXTRACT` is for the launcher's "install from archive" support. The
 launcher shells out to `innoextract` to unpack DaggerfallSetup, but every

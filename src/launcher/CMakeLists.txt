@@ -1,4 +1,6 @@
-# Qt6 launcher. Disable with -DBUILD_LAUNCHER=OFF.
+# Qt6 launcher. Disable with -DBUILD_LAUNCHER=OFF; the default AUTO only adds
+# this directory once the top level has confirmed Qt6 is present, so the
+# REQUIRED below is only reached when the launcher was actually asked for.
 # find_package picks up Ubuntu/Debian qt6-base-dev, Homebrew qt6, and the
 # official Qt SDK on Windows.
 

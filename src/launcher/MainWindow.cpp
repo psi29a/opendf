@@ -145,8 +145,10 @@ bool runTool(const QString &prog, const QStringList &args, QString *output,
         // Cancel feels immediate.
         p.waitForFinished(100);
         collected += p.readAll();
-        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents
-                                        | QEventLoop::AllEvents, 50);
+        // AllEvents, not ExcludeUserInputEvents: excluding input would swallow
+        // the click on the dialog's Cancel button, so wasCanceled() below could
+        // never become true and the child could never be killed.
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
         if(progress->wasCanceled())
         {
             p.kill();
@@ -558,8 +560,8 @@ QString MainWindow::installGameData(const QString &archivePath,
         if(!progress)
             return;
         progress->setLabelText(text);
-        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents
-                                        | QEventLoop::AllEvents, 50);
+        // Let input through too, so a Cancel click during a repaint isn't lost.
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     };
     const auto canceled = [progress] { return progress && progress->wasCanceled(); };
 
@@ -584,6 +586,13 @@ QString MainWindow::installGameData(const QString &archivePath,
     {
         stage(tr("Unpacking %1…").arg(QFileInfo(archivePath).fileName()));
 
+        // PowerShell single-quoted literals end at the first apostrophe, so a
+        // path like C:/Users/O'Brien/... would make Expand-Archive fail to
+        // parse. Doubling each ' is how you escape one inside such a literal.
+        const auto psQuote = [](const QString &s) {
+            return QString(s).replace(QLatin1Char('\''), QStringLiteral("''"));
+        };
+
         // unzip and 7z are near-universal on Linux/macOS; on Windows we lean
         // on PowerShell's Expand-Archive. Try each and use the first present.
         struct Unzipper { const char *prog; QStringList args; };
@@ -595,7 +604,7 @@ QString MainWindow::installGameData(const QString &archivePath,
             {"powershell", {QStringLiteral("-NoProfile"), QStringLiteral("-Command"),
                             QStringLiteral("Expand-Archive -LiteralPath '%1' "
                                            "-DestinationPath '%2' -Force")
-                                .arg(archivePath, staging.path())}},
+                                .arg(psQuote(archivePath), psQuote(staging.path()))}},
         };
 
         bool unzipped = false;
@@ -666,7 +675,14 @@ QString MainWindow::installGameData(const QString &archivePath,
                 return {};
             }
         }
-        return missingGameFiles(dest).isEmpty() ? dest : QString();
+        const QStringList copiedMissing = missingGameFiles(dest);
+        if(!copiedMissing.isEmpty())
+        {
+            *err = tr("Copied the archive into %1, but these required files are "
+                      "missing: %2.").arg(dest, copiedMissing.join(QStringLiteral(", ")));
+            return {};
+        }
+        return dest;
     }
 
     // An Inno Setup installer. Two ways to unpack it, tried in order:
@@ -751,8 +767,7 @@ QString MainWindow::installGameData(const QString &archivePath,
                 while(p.state() != QProcess::NotRunning)
                 {
                     p.waitForFinished(100);
-                    QCoreApplication::processEvents(
-                        QEventLoop::ExcludeUserInputEvents | QEventLoop::AllEvents, 50);
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
                     if(canceled() || wineElapsed.hasExpired(EXTRACT_TIMEOUT_MS))
                     {
                         p.kill();

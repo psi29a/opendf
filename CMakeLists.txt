@@ -1,4 +1,6 @@
-cmake_minimum_required(VERSION 3.10)
+# 3.16 is the floor Qt6's own config files require, and FetchContent_MakeAvailable
+# (used by the optional bundled innoextract) needs 3.14.
+cmake_minimum_required(VERSION 3.16)
 
 project(opendf)
 
@@ -37,7 +39,22 @@ else()
 endif()
 
 
-option(BUILD_LAUNCHER "Build the OpenDF launcher" ON)
+# AUTO builds the launcher when Qt6 is available and quietly skips it when it
+# isn't, so configuring the engine alone doesn't fail on a machine with no Qt6
+# development packages. ON demands it and errors out if Qt6 is missing; OFF
+# never builds it.
+set(BUILD_LAUNCHER AUTO CACHE STRING "Build the OpenDF launcher (ON/OFF/AUTO)")
+set_property(CACHE BUILD_LAUNCHER PROPERTY STRINGS AUTO ON OFF)
+
+if(BUILD_LAUNCHER STREQUAL "AUTO")
+    find_package(Qt6 6.5 QUIET COMPONENTS Widgets)
+    if(Qt6_FOUND)
+        set(BUILD_LAUNCHER ON)
+    else()
+        message(STATUS "Qt6 6.5 Widgets not found -- not building the launcher")
+        set(BUILD_LAUNCHER OFF)
+    endif()
+endif()
 
 find_package(OpenSceneGraph REQUIRED osgDB osgViewer osgGA osgUtil)
 find_package(SDL2 REQUIRED)
@@ -48,7 +65,16 @@ find_package(MyGUI REQUIRED)
 # bare Event, depending on MYGUI_DONT_USE_OBSOLETE. That choice changes the layout
 # of every widget, so it must match how libMyGUIEngine itself was built or event
 # offsets silently disagree and attaching a delegate corrupts memory.
-add_definitions("-DMYGUI_DONT_USE_OBSOLETE")
+#
+# MyGUI installs nothing that records which way it was built, so this cannot be
+# detected -- it has to be told. ON matches the distro packages we target
+# (Debian/Ubuntu build MyGUI with -DMYGUI_DONT_USE_OBSOLETE=TRUE); turn it OFF
+# if you link against a MyGUI built with its own upstream default of FALSE.
+option(MYGUI_DONT_USE_OBSOLETE
+       "Match a MyGUI built with MYGUI_DONT_USE_OBSOLETE=TRUE" ON)
+if(MYGUI_DONT_USE_OBSOLETE)
+    add_definitions("-DMYGUI_DONT_USE_OBSOLETE")
+endif()
 
 include_directories("${opendf_SOURCE_DIR}/src")
 
