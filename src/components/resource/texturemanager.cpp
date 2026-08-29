@@ -1,4 +1,5 @@
 
+#include <cstdint>
 #include "texturemanager.hpp"
 
 #include <sstream>

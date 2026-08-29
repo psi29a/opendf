@@ -1,4 +1,5 @@
 
+#include <cstdint>
 #include "exitdoor.hpp"
 
 #include "world/iface.hpp"

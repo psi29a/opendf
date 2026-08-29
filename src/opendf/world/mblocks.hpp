@@ -1,6 +1,7 @@
 #ifndef WORLD_MBLOCKS_HPP
 #define WORLD_MBLOCKS_HPP
 
+#include <cstdint>
 #include <iostream>
 #include <vector>
 #include <array>

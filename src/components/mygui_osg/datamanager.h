@@ -14,7 +14,7 @@ public:
     /** Get data stream from specified resource name.
         @param _name Resource name (usually file name).
     */
-    virtual MyGUI::IDataStream* getData(const std::string &_name) final;
+    virtual MyGUI::IDataStream* getData(const std::string &_name) const final;
 
     /** Free data stream.
         @param _data Data stream.
@@ -24,19 +24,19 @@ public:
     /** Is data with specified name exist.
         @param _name Resource name.
     */
-    virtual bool isDataExist(const std::string &_name) final;
+    virtual bool isDataExist(const std::string &_name) const final;
 
     /** Get all data names with names that matches pattern.
         @param _pattern Pattern to match (for example "*.layout").
     */
-    virtual const MyGUI::VectorString &getDataListNames(const std::string &_pattern) final;
+    virtual const MyGUI::VectorString &getDataListNames(const std::string &_pattern) const final;
 
     /** Get full path to data.
         @param _name Resource name.
         @return Return full path to specified data.
         For example getDataPath("My.layout") might return "C:\path\to\project\data\My.layout"
     */
-    virtual const std::string &getDataPath(const std::string &_name) final;
+    virtual std::string getDataPath(const std::string &_name) const final;
 };
 
 } // namespace MyGUI_OSG

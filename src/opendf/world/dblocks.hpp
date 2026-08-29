@@ -1,6 +1,7 @@
 #ifndef WORLD_DBLOCKS_HPP
 #define WORLD_DBLOCKS_HPP
 
+#include <cstdint>
 #include <iostream>
 #include <memory>
 #include <vector>

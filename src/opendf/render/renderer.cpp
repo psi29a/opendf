@@ -1,4 +1,5 @@
 
+#include <cstdint>
 #include "renderer.hpp"
 
 #include "class/placeable.hpp"

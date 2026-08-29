@@ -1,4 +1,5 @@
 
+#include <cstdint>
 #include "meshmanager.hpp"
 
 #include <osg/Node>

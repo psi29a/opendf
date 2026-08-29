@@ -1,4 +1,5 @@
 
+#include <cstdint>
 #include "meshloader.hpp"
 
 #include <algorithm>

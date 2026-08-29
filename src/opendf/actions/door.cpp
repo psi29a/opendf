@@ -1,4 +1,5 @@
 
+#include <cstdint>
 #include "door.hpp"
 
 #include <algorithm>

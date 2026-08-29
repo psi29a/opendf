@@ -1,4 +1,5 @@
 
+#include <cstdint>
 #include "dblocks.hpp"
 
 #include <algorithm>

@@ -1,4 +1,5 @@
 
+#include <cstdint>
 #include "texloader.hpp"
 
 #include <vector>

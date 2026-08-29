@@ -1,6 +1,7 @@
 #ifndef COMPONENTS_DFOSG_TEXLOADER_HPP
 #define COMPONENTS_DFOSG_TEXLOADER_HPP
 
+#include <cstdint>
 #include <vector>
 
 #include <osg/ref_ptr>

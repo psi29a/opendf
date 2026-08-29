@@ -1,6 +1,7 @@
 #ifndef RENDER_RENDERER_HPP
 #define RENDER_RENDERER_HPP
 
+#include <cstdint>
 #include <queue>
 
 #include <osg/ref_ptr>

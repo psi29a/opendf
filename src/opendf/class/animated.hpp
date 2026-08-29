@@ -1,6 +1,7 @@
 #ifndef CLASS_ANIMATED_HPP
 #define CLASS_ANIMATED_HPP
 
+#include <cstdint>
 #include "misc/sparsearray.hpp"
 
 

@@ -57,7 +57,7 @@ public:
     virtual const MyGUI::IntSize& getViewSize() const { return mViewSize; }
 
     /** @see RenderManager::getVertexFormat */
-    virtual MyGUI::VertexColourType getVertexFormat() { return mVertexFormat; }
+    virtual MyGUI::VertexColourType getVertexFormat() const { return mVertexFormat; }
 
     /** @see RenderManager::isFormatSupported */
     virtual bool isFormatSupported(MyGUI::PixelFormat format, MyGUI::TextureUsage usage);
@@ -82,11 +82,19 @@ public:
     /** @see IRenderTarget::doRender */
     virtual void doRender(MyGUI::IVertexBuffer *buffer, MyGUI::ITexture *texture, size_t count);
     /** @see IRenderTarget::getInfo */
-    virtual const MyGUI::RenderTargetInfo& getInfo() { return mInfo; }
+    virtual const MyGUI::RenderTargetInfo& getInfo() const { return mInfo; }
 
 /*internal:*/
     void drawFrame(osg::RenderInfo &renderInfo);
-    void setViewSize(int width, int height);
+    virtual void setViewSize(int width, int height);
+
+    /** @see RenderManager::registerShader */
+    virtual void registerShader(const std::string &/*shaderName*/,
+                                const std::string &/*vertexProgramFile*/,
+                                const std::string &/*fragmentProgramFile*/)
+    {
+        // Shaders are not supported by this render backend.
+    }
 };
 
 } // namespace MyGUI_OSG

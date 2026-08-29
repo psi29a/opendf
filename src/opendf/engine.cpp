@@ -325,7 +325,7 @@ bool Engine::go(void)
 
         Log::get().message("Loading cvar values...");
         const Settings::ConfigSection &cvars = cf.getSection("CVars");
-        for(const Settings::ConfigEntry &cvar : cvars)
+        for(const Settings::ConfigSection::value_type &cvar : cvars)
             CVar::setByName(cvar.first, cvar.second);
     }
 

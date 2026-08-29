@@ -1,6 +1,7 @@
 #ifndef COMPONENTS_VFS_MANAGER_HPP
 #define COMPONENTS_VFS_MANAGER_HPP
 
+#include <cstdint>
 #include <string>
 #include <iostream>
 #include <memory>

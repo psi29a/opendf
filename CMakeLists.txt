@@ -1,15 +1,21 @@
-cmake_minimum_required(VERSION 2.6)
+cmake_minimum_required(VERSION 3.10)
 
 project(opendf)
+
+# Prefer the GLVND OpenGL libraries over the legacy libGL when both are present.
+if(POLICY CMP0072)
+    cmake_policy(SET CMP0072 NEW)
+endif()
+set(OpenGL_GL_PREFERENCE GLVND)
 
 set(CMAKE_MODULE_PATH "${opendf_SOURCE_DIR}/cmake" "${CMAKE_MODULE_PATH}")
 
 include(CheckCXXCompilerFlag)
 
-check_cxx_compiler_flag(-std=c++11 HAVE_STD_CXX11)
-if(HAVE_STD_CXX11)
-    set(CMAKE_CXX_FLAGS "-std=c++11 ${CMAKE_CXX_FLAGS}")
-endif()
+# MyGUI 3.4+ headers use std::string_view, so C++17 is the minimum.
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(MSVC)
     add_definitions("-DNOMINMAX")
@@ -141,7 +147,7 @@ set_property(TARGET opendf APPEND PROPERTY INCLUDE_DIRECTORIES
 target_link_libraries(opendf
     ${OPENSCENEGRAPH_LIBRARIES}
     ${SDL2_LIBRARY}
-    ${OPENGL_gl_LIBRARY}
+    OpenGL::GL
     ${MyGUI_LIBRARIES}
 )
 
