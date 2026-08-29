@@ -1,4 +1,7 @@
 
+#include <algorithm>
+#include <memory>
+
 #include "archive.hpp"
 
 

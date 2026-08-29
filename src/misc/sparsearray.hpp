@@ -4,6 +4,7 @@
 #include <vector>
 #include <stdexcept>
 #include <cstddef>
+#include <string>
 
 
 namespace Misc

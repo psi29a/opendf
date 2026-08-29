@@ -2,6 +2,7 @@
 #include "manager.hpp"
 
 #include <algorithm>
+#include <memory>
 
 #ifdef _WIN32
 #include "dirent.h"

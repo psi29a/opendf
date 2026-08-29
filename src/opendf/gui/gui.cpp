@@ -10,6 +10,8 @@
 #include <SDL_mouse.h>
 
 #include <osg/Group>
+#include <stdexcept>
+#include <algorithm>
 
 #include "components/mygui_osg/rendermanager.h"
 #include "components/mygui_osg/datamanager.h"

@@ -1,5 +1,6 @@
 
 #include <cstdint>
+#include <stdexcept>
 #include "texloader.hpp"
 
 #include <vector>

@@ -1,5 +1,8 @@
 
 #include <cstdint>
+#include <string>
+#include <stdexcept>
+#include <algorithm>
 #include "texturemanager.hpp"
 
 #include <sstream>

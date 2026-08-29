@@ -3,6 +3,7 @@
 
 #include <typeinfo>
 #include <list>
+#include <stdexcept>
 
 #include "referenceable.hpp"
 
