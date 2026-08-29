@@ -66,12 +66,41 @@ find_package(MyGUI REQUIRED)
 # of every widget, so it must match how libMyGUIEngine itself was built or event
 # offsets silently disagree and attaching a delegate corrupts memory.
 #
-# MyGUI installs nothing that records which way it was built, so this cannot be
-# detected -- it has to be told. ON matches the distro packages we target
-# (Debian/Ubuntu build MyGUI with -DMYGUI_DONT_USE_OBSOLETE=TRUE); turn it OFF
-# if you link against a MyGUI built with its own upstream default of FALSE.
-option(MYGUI_DONT_USE_OBSOLETE
-       "Match a MyGUI built with MYGUI_DONT_USE_OBSOLETE=TRUE" ON)
+# MyGUI 3.5+ installs a generated MyGUI_Config.h recording how it was built, and
+# MyGUI_Prerequest.h includes it, so there the headers already agree with the
+# library and we must not define anything ourselves. #cmakedefine writes
+# "/* #undef ... */" -- a comment, not an #undef -- so a -D on the command line
+# would silently override that header and reintroduce the mismatch.
+#
+# Older MyGUI installs record nothing, so there it has to be told. AUTO detects
+# the config header and stays out of the way when it exists, falling back to ON
+# otherwise, which matches the distro packages we target (Debian/Ubuntu build
+# MyGUI with -DMYGUI_DONT_USE_OBSOLETE=TRUE). Force it with ON/OFF if you link
+# against a pre-3.5 MyGUI built some other way.
+set(MYGUI_DONT_USE_OBSOLETE AUTO CACHE STRING
+    "Match how MyGUI was built: ON/OFF/AUTO")
+set_property(CACHE MYGUI_DONT_USE_OBSOLETE PROPERTY STRINGS AUTO ON OFF)
+
+find_file(MYGUI_CONFIG_HEADER MyGUI_Config.h
+          HINTS ${MyGUI_INCLUDE_DIRS}
+          NO_DEFAULT_PATH)
+mark_as_advanced(MYGUI_CONFIG_HEADER)
+
+if(MYGUI_DONT_USE_OBSOLETE STREQUAL "AUTO")
+    if(MYGUI_CONFIG_HEADER)
+        message(STATUS "MyGUI reports its own build options -- not defining "
+                       "MYGUI_DONT_USE_OBSOLETE")
+        set(MYGUI_DONT_USE_OBSOLETE OFF)
+    else()
+        set(MYGUI_DONT_USE_OBSOLETE ON)
+    endif()
+elseif(MYGUI_DONT_USE_OBSOLETE AND MYGUI_CONFIG_HEADER)
+    message(WARNING
+        "MYGUI_DONT_USE_OBSOLETE was forced ON, but this MyGUI ships "
+        "MyGUI_Config.h and already knows how it was built. Defining it here "
+        "overrides that header and corrupts widget layout if the two disagree.")
+endif()
+
 if(MYGUI_DONT_USE_OBSOLETE)
     add_definitions("-DMYGUI_DONT_USE_OBSOLETE")
 endif()

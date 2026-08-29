@@ -68,7 +68,7 @@ Useful CMake options (defaults in parentheses):
 
     -DBUILD_LAUNCHER=AUTO|ON|OFF build the Qt6 launcher (AUTO)
     -DBUILD_INNOEXTRACT=ON|OFF   build a bundled innoextract (OFF)
-    -DMYGUI_DONT_USE_OBSOLETE=ON|OFF  match how MyGUI was built (ON)
+    -DMYGUI_DONT_USE_OBSOLETE=AUTO|ON|OFF  match how MyGUI was built (AUTO)
 
 `BUILD_LAUNCHER=AUTO` builds the launcher if Qt6 6.5 is installed and skips it
 otherwise, so an engine-only build needs no Qt6. Pass `ON` to require it (the
@@ -76,10 +76,15 @@ build then fails if Qt6 is missing) or `OFF` to never build it.
 
 `MYGUI_DONT_USE_OBSOLETE` has to agree with the `MYGUI_DONT_USE_OBSOLETE` the
 MyGUI you link against was built with -- it changes the layout of every widget,
-and a mismatch corrupts memory rather than failing to build. MyGUI installs
-nothing that records the choice, so it cannot be detected. The default `ON`
-matches the Debian/Ubuntu packages; set it to `OFF` for a MyGUI built with
-upstream's own default.
+and a mismatch corrupts memory rather than failing to build.
+
+`AUTO` handles both eras of MyGUI. From 3.5 on, MyGUI installs a generated
+`MyGUI_Config.h` recording how it was built and includes it from
+`MyGUI_Prerequest.h`, so the headers already agree with the library and we
+define nothing -- passing `-DMYGUI_DONT_USE_OBSOLETE` there would *override*
+that header and cause the very mismatch it prevents. Older MyGUI records
+nothing, so `AUTO` falls back to defining it, which matches the Debian/Ubuntu
+packages. Force `ON`/`OFF` only for a pre-3.5 MyGUI built some other way.
 
 `BUILD_INNOEXTRACT` is for the launcher's "install from archive" support. The
 launcher shells out to `innoextract` to unpack DaggerfallSetup, but every
