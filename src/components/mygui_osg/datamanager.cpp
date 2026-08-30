@@ -31,7 +31,9 @@ public:
                 mStream->seekg(pos);
             }
         }
-        return mSize;
+        // Explicit hop through the offset type: converting fpos<mbstate_t>
+        // straight to size_t is ambiguous under libc++.
+        return size_t(std::streamoff(mSize));
     }
 
     virtual void readline(std::string &_source, MyGUI::Char _delim = '\n') final
@@ -56,7 +58,7 @@ public:
 namespace MyGUI_OSG
 {
 
-MyGUI::IDataStream *DataManager::getData(const std::string &_name)
+MyGUI::IDataStream *DataManager::getData(const std::string &_name) const
 {
     VFS::IStreamPtr stream = VFS::Manager::get().open(_name.c_str());
     if(!stream) return nullptr;
@@ -68,12 +70,12 @@ void DataManager::freeData(MyGUI::IDataStream *_data)
     delete _data;
 }
 
-bool DataManager::isDataExist(const std::string &_name)
+bool DataManager::isDataExist(const std::string &_name) const
 {
     return VFS::Manager::get().exists(_name.c_str());
 }
 
-const MyGUI::VectorString &DataManager::getDataListNames(const std::string &_pattern)
+const MyGUI::VectorString &DataManager::getDataListNames(const std::string &_pattern) const
 {
     static MyGUI::VectorString namelist;
 
@@ -84,16 +86,23 @@ const MyGUI::VectorString &DataManager::getDataListNames(const std::string &_pat
     return namelist;
 }
 
-const std::string &DataManager::getDataPath(const std::string &_name)
+#if MYGUI_VERSION >= MYGUI_DEFINE_VERSION(3, 4, 3)
+std::string DataManager::getDataPath(const std::string &_name) const
 {
-    static std::string path;
-
     std::set<std::string> list = VFS::Manager::get().list(("*"+_name).c_str());
     if(!list.empty())
-        path = *list.begin();
-    else
-        std::string().swap(path);
-    return path;
+        return *list.begin();
+    return std::string();
 }
+#else
+const std::string &DataManager::getDataPath(const std::string &_name) const
+{
+    // Returning a reference here, so the value has to live in the object
+    // rather than on the stack.
+    std::set<std::string> list = VFS::Manager::get().list(("*"+_name).c_str());
+    mDataPath = list.empty() ? std::string() : *list.begin();
+    return mDataPath;
+}
+#endif
 
 } // namespace MyGUI_OSG

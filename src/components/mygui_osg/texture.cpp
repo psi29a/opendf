@@ -6,6 +6,7 @@
 #include <osg/Texture2D>
 #include <osgDB/ReadFile>
 #include <MYGUI/MyGUI_Gui.h>
+#include <stdexcept>
 
 #include "diagnostic.h"
 #include "rendermanager.h"
@@ -132,8 +133,13 @@ void Texture::saveToFile(const std::string &fname)
     std::cerr<< "Would save image to file "<<fname <<std::endl;
 }
 
+void Texture::setShader(const std::string &/*shaderName*/)
+{
+    // Shaders are not supported by this render backend.
+}
 
-int Texture::getWidth()
+
+int Texture::getWidth() const
 {
     if(!mTexture.valid())
         return 0;
@@ -142,7 +148,7 @@ int Texture::getWidth()
     return mTexture->getTextureWidth();
 }
 
-int Texture::getHeight()
+int Texture::getHeight() const
 {
     if(!mTexture.valid())
         return 0;
@@ -182,7 +188,7 @@ void Texture::unlock()
     mLockedImage = nullptr;
 }
 
-bool Texture::isLocked()
+bool Texture::isLocked() const
 {
     return mLockedImage.valid();
 }

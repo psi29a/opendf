@@ -1,6 +1,7 @@
 #ifndef COMPONENTS_ARCHIVES_ARCHIVE_HPP
 #define COMPONENTS_ARCHIVES_ARCHIVE_HPP
 
+#include <cstdint>
 #include <iostream>
 #include <string>
 #include <memory>

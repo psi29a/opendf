@@ -1,4 +1,8 @@
 
+#include <cstdint>
+#include <string>
+#include <stdexcept>
+#include <memory>
 #include "meshloader.hpp"
 
 #include <algorithm>

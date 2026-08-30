@@ -58,7 +58,9 @@ class ResizeHandler : public osgGA::GUIEventHandler {
 public:
     ResizeHandler(MyGUI_OSG::RenderManager *parent=nullptr) : mParent(parent) { }
     ResizeHandler(const ResizeHandler &rhs, const osg::CopyOp &copyop=osg::CopyOp::SHALLOW_COPY)
-        : osgGA::GUIEventHandler(rhs, copyop)
+        : osg::Object(rhs, copyop)
+        , osg::Callback(rhs, copyop)
+        , osgGA::GUIEventHandler(rhs, copyop)
         , mParent(rhs.mParent)
     { }
 

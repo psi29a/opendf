@@ -1,4 +1,5 @@
 
+#include <cstdint>
 #include "pitems.hpp"
 
 #include <sstream>

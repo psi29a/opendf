@@ -1,6 +1,7 @@
 #ifndef WORLD_WORLD_HPP
 #define WORLD_WORLD_HPP
 
+#include <cstdint>
 #include "iface.hpp"
 
 #include <memory>

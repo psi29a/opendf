@@ -32,19 +32,20 @@ public:
     virtual void createManual(int width, int height, MyGUI::TextureUsage usage, MyGUI::PixelFormat format);
     virtual void loadFromFile(const std::string &fname);
     virtual void saveToFile(const std::string &fname);
+    virtual void setShader(const std::string &shaderName);
 
     virtual void destroy();
 
     virtual void* lock(MyGUI::TextureUsage access);
     virtual void unlock();
-    virtual bool isLocked();
+    virtual bool isLocked() const;
 
-    virtual int getWidth();
-    virtual int getHeight();
+    virtual int getWidth() const;
+    virtual int getHeight() const;
 
-    virtual MyGUI::PixelFormat getFormat() { return mFormat; }
-    virtual MyGUI::TextureUsage getUsage() { return mUsage; }
-    virtual size_t getNumElemBytes() { return mNumElemBytes; }
+    virtual MyGUI::PixelFormat getFormat() const { return mFormat; }
+    virtual MyGUI::TextureUsage getUsage() const { return mUsage; }
+    virtual size_t getNumElemBytes() const { return mNumElemBytes; }
 
     virtual MyGUI::IRenderTarget *getRenderTarget();
 

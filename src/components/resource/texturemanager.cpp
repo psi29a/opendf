@@ -1,4 +1,8 @@
 
+#include <cstdint>
+#include <string>
+#include <stdexcept>
+#include <algorithm>
 #include "texturemanager.hpp"
 
 #include <sstream>
@@ -11,6 +15,20 @@
 
 #include "components/vfs/manager.hpp"
 #include "components/dfosg/texloader.hpp"
+
+
+// GL_RED_INTEGER is OpenGL 3.0. Mesa's glext.h defines every enum regardless
+// of the version actually available, but macOS's OpenGL/gl.h stops at 2.1 and
+// ships no equivalent, so the name simply isn't there. osg/Texture (pulled in
+// via Texture2D above) declares the same value under its EXT spelling; fall
+// back to that, and to the literal if even that is missing.
+#ifndef GL_RED_INTEGER
+#ifdef GL_RED_INTEGER_EXT
+#define GL_RED_INTEGER GL_RED_INTEGER_EXT
+#else
+#define GL_RED_INTEGER 0x8D94
+#endif
+#endif
 
 
 namespace

@@ -1,4 +1,5 @@
 
+#include <cstdint>
 #include "animated.hpp"
 
 #include <cmath>

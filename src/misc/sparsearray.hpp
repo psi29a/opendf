@@ -4,6 +4,7 @@
 #include <vector>
 #include <stdexcept>
 #include <cstddef>
+#include <string>
 
 
 namespace Misc
@@ -184,7 +185,7 @@ public:
     {
         auto iter = lookupKey(idx);
         if(iter == mIdxLookup.cend())
-            mData.end();
+            return mData.end();
 
         return mData.begin() + std::distance(mIdxLookup.cbegin(), iter);
     }
@@ -192,7 +193,7 @@ public:
     {
         auto iter = lookupKey(idx);
         if(iter == mIdxLookup.cend())
-            mData.cend();
+            return mData.cend();
 
         return mData.cbegin() + std::distance(mIdxLookup.cbegin(), iter);
     }

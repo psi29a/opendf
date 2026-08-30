@@ -213,6 +213,7 @@ public:
     SDL2WindowingSystemInterface()
     {
         OSG_INFO<< "SDL2WindowingSystemInterface()" <<std::endl;
+        setName("SDL2");
     }
 
     virtual ~SDL2WindowingSystemInterface()
@@ -309,7 +310,9 @@ public:
 // declare C entry point for static compilation.
 extern "C" void graphicswindow_SDL2(void)
 {
-    osg::GraphicsContext::setWindowingSystemInterface(new SDL2WindowingSystemInterface);
+    osg::GraphicsContext::getWindowingSystemInterfaces()->addWindowingSystemInterface(
+        new SDL2WindowingSystemInterface
+    );
 }
 
 }

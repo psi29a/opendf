@@ -1,4 +1,5 @@
 
+#include <cstdint>
 #include "mblocks.hpp"
 
 #include <iostream>

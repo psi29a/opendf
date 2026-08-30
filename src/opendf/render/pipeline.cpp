@@ -18,6 +18,25 @@
 
 #include "renderer.hpp"
 
+
+// These are OpenGL 3.0 enums. On Linux, Mesa's glext.h declares every enum
+// regardless of the version actually available, but macOS's OpenGL/gl.h (which
+// SDL_opengl.h pulls in) stops at 2.1 and has no equivalent, so the names are
+// missing even though the driver supports the feature through a core profile.
+// Define the standard values when the headers don't.
+#ifndef GL_RGBA16F
+#define GL_RGBA16F                        0x881A
+#endif
+#ifndef GL_DEPTH_STENCIL
+#define GL_DEPTH_STENCIL                  0x84F9
+#endif
+#ifndef GL_DEPTH32F_STENCIL8
+#define GL_DEPTH32F_STENCIL8              0x8CAD
+#endif
+#ifndef GL_FLOAT_32_UNSIGNED_INT_24_8_REV
+#define GL_FLOAT_32_UNSIGNED_INT_24_8_REV 0x8DAD
+#endif
+
 #include "cvars.hpp"
 #include "log.hpp"
 

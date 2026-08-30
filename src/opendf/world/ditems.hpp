@@ -1,6 +1,7 @@
 #ifndef WORLD_DITEMS_HPP
 #define WORLD_DITEMS_HPP
 
+#include <cstdint>
 #include "itembase.hpp"
 
 

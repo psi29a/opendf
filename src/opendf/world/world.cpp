@@ -1,4 +1,9 @@
 
+#include <cstdint>
+#include <string>
+#include <stdexcept>
+#include <algorithm>
+#include <memory>
 #include "world.hpp"
 
 #include <sstream>

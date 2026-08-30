@@ -3,6 +3,9 @@
 
 #include <sstream>
 #include <fstream>
+#include <string>
+#include <stdexcept>
+#include <memory>
 
 
 namespace Archives

@@ -1,15 +1,23 @@
-cmake_minimum_required(VERSION 2.6)
+# 3.16 is the floor Qt6's own config files require, and FetchContent_MakeAvailable
+# (used by the optional bundled innoextract) needs 3.14.
+cmake_minimum_required(VERSION 3.16)
 
 project(opendf)
+
+# Prefer the GLVND OpenGL libraries over the legacy libGL when both are present.
+if(POLICY CMP0072)
+    cmake_policy(SET CMP0072 NEW)
+endif()
+set(OpenGL_GL_PREFERENCE GLVND)
 
 set(CMAKE_MODULE_PATH "${opendf_SOURCE_DIR}/cmake" "${CMAKE_MODULE_PATH}")
 
 include(CheckCXXCompilerFlag)
 
-check_cxx_compiler_flag(-std=c++11 HAVE_STD_CXX11)
-if(HAVE_STD_CXX11)
-    set(CMAKE_CXX_FLAGS "-std=c++11 ${CMAKE_CXX_FLAGS}")
-endif()
+# MyGUI 3.4+ headers use std::string_view, so C++17 is the minimum.
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(MSVC)
     add_definitions("-DNOMINMAX")
@@ -30,11 +38,79 @@ else()
     endif()
 endif()
 
+# macOS deprecated the whole OpenGL API in 10.14. We know, and OSG's headers
+# pull it in on every translation unit that touches osg/GL, which buries real
+# warnings under hundreds of these. Apple's own opt-out.
+if(APPLE)
+    add_definitions("-DGL_SILENCE_DEPRECATION")
+endif()
+
+
+# AUTO builds the launcher when Qt6 is available and quietly skips it when it
+# isn't, so configuring the engine alone doesn't fail on a machine with no Qt6
+# development packages. ON demands it and errors out if Qt6 is missing; OFF
+# never builds it.
+set(BUILD_LAUNCHER AUTO CACHE STRING "Build the OpenDF launcher (ON/OFF/AUTO)")
+set_property(CACHE BUILD_LAUNCHER PROPERTY STRINGS AUTO ON OFF)
+
+if(BUILD_LAUNCHER STREQUAL "AUTO")
+    find_package(Qt6 6.2 QUIET COMPONENTS Widgets)
+    if(Qt6_FOUND)
+        set(BUILD_LAUNCHER ON)
+    else()
+        message(STATUS "Qt6 Widgets not found -- not building the launcher")
+        set(BUILD_LAUNCHER OFF)
+    endif()
+endif()
 
 find_package(OpenSceneGraph REQUIRED osgDB osgViewer osgGA osgUtil)
 find_package(SDL2 REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(MyGUI REQUIRED)
+
+# MyGUI's EventPair is either a CompositeEvent (obsolete delegates enabled) or a
+# bare Event, depending on MYGUI_DONT_USE_OBSOLETE. That choice changes the layout
+# of every widget, so it must match how libMyGUIEngine itself was built or event
+# offsets silently disagree and attaching a delegate corrupts memory.
+#
+# MyGUI 3.5+ installs a generated MyGUI_Config.h recording how it was built, and
+# MyGUI_Prerequest.h includes it, so there the headers already agree with the
+# library and we must not define anything ourselves. #cmakedefine writes
+# "/* #undef ... */" -- a comment, not an #undef -- so a -D on the command line
+# would silently override that header and reintroduce the mismatch.
+#
+# Older MyGUI installs record nothing, so there it has to be told. AUTO detects
+# the config header and stays out of the way when it exists, falling back to ON
+# otherwise, which matches the distro packages we target (Debian/Ubuntu build
+# MyGUI with -DMYGUI_DONT_USE_OBSOLETE=TRUE). Force it with ON/OFF if you link
+# against a pre-3.5 MyGUI built some other way.
+set(MYGUI_DONT_USE_OBSOLETE AUTO CACHE STRING
+    "Match how MyGUI was built: ON/OFF/AUTO")
+set_property(CACHE MYGUI_DONT_USE_OBSOLETE PROPERTY STRINGS AUTO ON OFF)
+
+find_file(MYGUI_CONFIG_HEADER MyGUI_Config.h
+          HINTS ${MyGUI_INCLUDE_DIRS}
+          NO_DEFAULT_PATH)
+mark_as_advanced(MYGUI_CONFIG_HEADER)
+
+if(MYGUI_DONT_USE_OBSOLETE STREQUAL "AUTO")
+    if(MYGUI_CONFIG_HEADER)
+        message(STATUS "MyGUI reports its own build options -- not defining "
+                       "MYGUI_DONT_USE_OBSOLETE")
+        set(MYGUI_DONT_USE_OBSOLETE OFF)
+    else()
+        set(MYGUI_DONT_USE_OBSOLETE ON)
+    endif()
+elseif(MYGUI_DONT_USE_OBSOLETE AND MYGUI_CONFIG_HEADER)
+    message(WARNING
+        "MYGUI_DONT_USE_OBSOLETE was forced ON, but this MyGUI ships "
+        "MyGUI_Config.h and already knows how it was built. Defining it here "
+        "overrides that header and corrupts widget layout if the two disagree.")
+endif()
+
+if(MYGUI_DONT_USE_OBSOLETE)
+    add_definitions("-DMYGUI_DONT_USE_OBSOLETE")
+endif()
 
 include_directories("${opendf_SOURCE_DIR}/src")
 
@@ -141,7 +217,7 @@ set_property(TARGET opendf APPEND PROPERTY INCLUDE_DIRECTORIES
 target_link_libraries(opendf
     ${OPENSCENEGRAPH_LIBRARIES}
     ${SDL2_LIBRARY}
-    ${OPENGL_gl_LIBRARY}
+    OpenGL::GL
     ${MyGUI_LIBRARIES}
 )
 
@@ -158,3 +234,8 @@ add_executable(bsatool ${SRCS} ${HDRS})
 
 
 install(TARGETS opendf bsatool RUNTIME DESTINATION bin)
+
+
+if(BUILD_LAUNCHER)
+    add_subdirectory(src/launcher)
+endif()

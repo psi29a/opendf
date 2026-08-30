@@ -6,6 +6,8 @@
 #include <cassert>
 #include <cstring>
 #include <cstdlib>
+#include <string>
+#include <stdexcept>
 
 #include "gui/iface.hpp"
 #include "delegates.hpp"

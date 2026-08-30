@@ -1,0 +1,300 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    # Default is 6 hours. Nothing here should take more than a fraction of
+    # that, and a stuck job should fail fast rather than hold a runner.
+    timeout-minutes: 90
+    # Persist vcpkg's built packages in the GitHub Actions cache so dependencies
+    # are built from source only once, then restored on later runs.
+    env:
+      # OpenMW's prebuilt x64-windows vcpkg tree, used by the Windows job.
+      # Bump both together; the SHA512 is the one they publish alongside it.
+      OPENMW_DEPS_TAG: "2026-02-24"
+      OPENMW_DEPS_SHA512: "26175e781a4cfe4ca8a6e1b7d97ba899d15841e97d494b5fdc73d5ba0de8af8d65fa7b1cb9950a6568c3e0c59dd5d030c800a50481453179b1dab8032f6edfd9"
+      # Hash the relative path, not the absolute one: CMake bakes the build
+      # directory into some generated sources (innoextract's autogen files
+      # among them), which would otherwise miss whenever the path moves.
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_SLOPPINESS: "locale,time_macros,include_file_ctime,include_file_mtime"
+    strategy:
+      # One platform failing shouldn't hide results from the other two.
+      fail-fast: false
+      matrix:
+        include:
+          # SDL2, OSG and MyGUI are all in noble, so ubuntu-latest is fine
+          # here -- no need for a newer image the way an SDL3 project needs.
+          - os: ubuntu-latest
+            name: Linux (GCC)
+          - os: macos-latest
+            name: macOS (Clang)
+          - os: windows-latest
+            name: Windows (MSVC)
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Nothing here pushes back to the repository, so don't leave a
+          # credential in .git/config for the rest of the job to inherit.
+          persist-credentials: false
+
+      # Everything opendf needs is packaged in Debian/Ubuntu, launcher included.
+      # Boost and liblzma are for the innoextract the launcher builds alongside
+      # itself (src/launcher/CMakeLists.txt).
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake ninja-build build-essential \
+            libopenscenegraph-dev libmygui-dev libsdl2-dev \
+            libgl1-mesa-dev qt6-base-dev \
+            libboost-iostreams-dev libboost-filesystem-dev \
+            libboost-date-time-dev libboost-program-options-dev liblzma-dev
+
+      # Homebrew has open-scene-graph and qt, but:
+      #   * no mygui formula at all -- it has to be built from source (below)
+      #   * no sdl2 formula either; it was replaced by sdl2-compat, which is
+      #     an SDL2 API/ABI shim over SDL3 and installs the same sdl2.pc and
+      #     SDL2 headers find_package(SDL2) looks for.
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install cmake ninja open-scene-graph sdl2-compat qt freetype \
+            boost xz
+
+      # Cache the installed MyGUI tree so the source build below only happens
+      # when the version changes. The key carries the tag, so bumping
+      # MyGUI3.4.4 automatically misses and rebuilds.
+      - name: Cache MyGUI (macOS)
+        if: runner.os == 'macOS'
+        id: cache-mygui
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/mygui-install
+          # The -vN is ours: it must change whenever the cmake options below
+          # do, or a tree built with the old flags keeps being restored.
+          key: mygui-${{ runner.os }}-MyGUI3.4.4-v2-noobsolete
+
+      # MyGUI from source, since Homebrew dropped it. Only MyGUIEngine is
+      # needed: opendf brings its own OSG-backed RenderManager/DataManager
+      # (src/opendf/gui/gui.cpp) rather than using a MyGUI render platform,
+      # so the demos, tools, docs and platform libs are all switched off and
+      # this stays a short build.
+      #
+      # MYGUI_RENDERSYSTEM=1 is the "Dummy" platform. The default is 3 (Ogre),
+      # which would drag in an Ogre dependency we have no use for.
+      #
+      # MYGUI_DONT_USE_OBSOLETE=ON is not optional: 3.4.4 defaults it to FALSE
+      # and ships no MyGUI_Config.h, so our AUTO detection sees a pre-3.5
+      # install and defines the macro. If the library were built the other way
+      # the two would disagree about every widget's layout -- which corrupts
+      # memory rather than failing to link. Build it to match.
+      - name: Build MyGUI from source (macOS)
+        if: runner.os == 'macOS' && steps.cache-mygui.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch MyGUI3.4.4 \
+            https://github.com/MyGUI/mygui.git "$RUNNER_TEMP/mygui"
+          cmake -S "$RUNNER_TEMP/mygui" -B "$RUNNER_TEMP/mygui/build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/mygui-install" \
+            -DMYGUI_RENDERSYSTEM=1 \
+            -DMYGUI_DONT_USE_OBSOLETE=ON \
+            -DMYGUI_BUILD_DEMOS=OFF \
+            -DMYGUI_BUILD_TOOLS=OFF \
+            -DMYGUI_BUILD_PLUGINS=OFF \
+            -DMYGUI_BUILD_DOCS=OFF \
+            -DMYGUI_BUILD_UNITTESTS=OFF \
+            -DMYGUI_BUILD_TEST_APP=OFF
+          cmake --build "$RUNNER_TEMP/mygui/build" --target install
+
+      # Windows dependencies come prebuilt rather than compiled here.
+      #
+      # Building them with vcpkg meant ~119 ports from source (osg's default
+      # features alone drag in gdal, hdf5, netcdf, proj, openssl...), which ran
+      # for hours and never even reached the configure step. OpenMW hit the same
+      # wall and solved it by publishing a prebuilt x64-windows vcpkg tree; they
+      # use OSG and MyGUI just as we do, so it carries everything we need:
+      # openmw-osg (their OSG fork), MyGUI 3.4.3, SDL2, and the Boost components
+      # and lzma that innoextract wants.
+      #
+      # Pinned by tag and checked against the SHA512 they publish, so this is
+      # reproducible and a tampered or truncated download fails the job.
+      - name: Cache Windows dependencies
+        if: runner.os == 'Windows'
+        id: cache-deps
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/deps
+          # -vN is ours, not upstream's: the tree we cache is their archive
+          # plus the Boost headers added below, so it has to change whenever
+          # that overlay does. Without it a cache written before the overlay
+          # existed keeps being restored, the add step is skipped as a
+          # cache hit, and the build fails on the very headers it adds.
+          key: omw-deps-${{ env.OPENMW_DEPS_TAG }}-v2-boost-format-ptrcontainer
+
+      - name: Download prebuilt dependencies (Windows)
+        if: runner.os == 'Windows' && steps.cache-deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $tag = "${{ env.OPENMW_DEPS_TAG }}"
+          $name = "vcpkg-x64-windows-2022-$tag"
+          $url = "https://github.com/OpenMW/openmw-deps-build/releases/download/$tag/$name.7z"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\deps.7z"
+
+          # Fail loudly on a tampered or truncated download rather than building
+          # against whatever arrived.
+          $expected = "${{ env.OPENMW_DEPS_SHA512 }}"
+          $actual = (Get-FileHash -Algorithm SHA512 "$env:RUNNER_TEMP\deps.7z").Hash.ToLower()
+          if ($actual -ne $expected.ToLower()) {
+            Write-Error "Checksum mismatch`nexpected $expected`ngot      $actual"
+            exit 1
+          }
+
+          New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\deps" | Out-Null
+          7z x -y "-o${{ github.workspace }}\deps" "$env:RUNNER_TEMP\deps.7z" | Out-Null
+
+      # innoextract needs boost/format and boost/ptr_container, which OpenMW
+      # has no use for and so left out of their tree. Both are header-only, so
+      # drop the headers in beside the rest rather than pulling vcpkg back in
+      # to build them. Taken at the boost-1.90.0 tag to match the Boost already
+      # in the archive -- vcpkg's current ports are 1.92, and mixing versions
+      # inside one Boost tree is asking for trouble.
+      #
+      # Runs on a cache hit too, skipping per-library only when the headers are
+      # already there. Gating the whole step on a cache miss meant a tree cached
+      # before this step existed was restored intact and the step skipped, so
+      # the build kept failing on exactly the headers this adds.
+      - name: Add missing Boost headers (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $inc = "${{ github.workspace }}\deps\installed\x64-windows\include"
+          foreach ($lib in @("format", "ptr_container")) {
+            if (Test-Path "$inc\boost\$lib") {
+              Write-Host "boost/$lib already present"
+              continue
+            }
+            $url = "https://github.com/boostorg/$lib/archive/refs/tags/boost-1.90.0.tar.gz"
+            Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\$lib.tar.gz"
+            tar -xzf "$env:RUNNER_TEMP\$lib.tar.gz" -C "$env:RUNNER_TEMP"
+            Copy-Item -Recurse -Force "$env:RUNNER_TEMP\$lib-boost-1.90.0\include\boost\*" "$inc\boost\"
+          }
+          if (-not (Test-Path "$inc\boost\ptr_container\ptr_map.hpp")) {
+            Write-Error "boost/ptr_container headers did not land where expected"
+            exit 1
+          }
+
+      - name: Save Windows dependency cache
+        if: always() && runner.os == 'Windows' && steps.cache-deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/deps
+          key: ${{ steps.cache-deps.outputs.cache-primary-key }}
+
+      # Ensure Ninja is on PATH for later steps. (gha-setup-ninja registers it
+      # via $GITHUB_PATH, which -- unlike choco -- propagates across steps.)
+      - name: Set up Ninja (Windows)
+        if: runner.os == 'Windows'
+        # Pinned to v6 by SHA: @master is mutable, and this runs on our runner.
+        uses: seanmiddleditch/gha-setup-ninja@3b1f8f94a2f8254bd26914c4ab9474d4f0015f67 # v6
+
+      # Prebuilt Qt6 for the launcher; sets Qt6_DIR + PATH so find_package(Qt6)
+      # succeeds and BUILD_LAUNCHER=AUTO picks it up.
+      - name: Install Qt6 (Windows)
+        if: runner.os == 'Windows'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2022_64'
+          cache: true
+
+      # The Ninja generator needs cl.exe on PATH, which requires the MSVC
+      # developer environment to be activated.
+      - name: Set up MSVC environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # Compiler caching: ccache hashes preprocessor output + flags and returns
+      # the cached object on a hit, so an unchanged TU recompiles in
+      # milliseconds. ccache 4.x supports MSVC, so one setup covers all three
+      # platforms; CMake is pointed at it via CMAKE_*_COMPILER_LAUNCHER below.
+      # This also covers the innoextract the launcher builds -- FetchContent
+      # puts it under build/_deps in the same tree, so the launcher applies.
+      #
+      # 1G rather than the default: the engine, the launcher and innoextract
+      # all share this cache.
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ matrix.os }}
+          max-size: 1G
+
+      - name: Configure (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          # macOS: point CMake at the brewed Qt/OSG and the MyGUI we built
+          # above. Linux gets everything from apt, so it needs no extra hints.
+          # An array, not a string: CMAKE_PREFIX_PATH is a ;-separated list, and
+          # word-splitting a bare string containing ';' is asking for trouble.
+          EXTRA_ARGS=()
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            EXTRA_ARGS+=("-DCMAKE_PREFIX_PATH=$(brew --prefix qt);$(brew --prefix open-scene-graph);$RUNNER_TEMP/mygui-install")
+            # cmake/FindMyGUI.cmake hints off $ENV{MYGUI_HOME} -- an environment
+            # variable, so a -DMYGUI_HOME= would be silently ignored.
+            export MYGUI_HOME="$RUNNER_TEMP/mygui-install"
+          fi
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DBUILD_LAUNCHER=ON \
+            "${EXTRA_ARGS[@]}"
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache `
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache `
+            -DBUILD_LAUNCHER=ON `
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/deps/scripts/buildsystems/vcpkg.cmake"
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      # opendf has no test suite yet, so the build itself is the check. Once
+      # tests land, add a ctest step here.
+
+      # Keep the binaries from each platform so a PR can be smoke-tested
+      # without rebuilding locally.
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: opendf-${{ matrix.os }}
+          path: |
+            build/opendf
+            build/bsatool
+            build/opendf-launcher
+            build/opendf.exe
+            build/bsatool.exe
+            build/opendf-launcher.exe
+          if-no-files-found: warn
