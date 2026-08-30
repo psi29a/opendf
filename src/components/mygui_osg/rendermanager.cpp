@@ -70,24 +70,12 @@ public:
 osg::StateSet *setShaderProgram(osg::Node *node, const std::string &vert, const std::string &frag)
 {
     osg::StateSet *ss = node->getOrCreateStateSet();
-    if(1)
-    {
-        osg::ref_ptr<osg::Program> program = new osg::Program();
-        program->addShader(osgDB::readShaderFile(osg::Shader::VERTEX, vert));
-        program->addShader(osgDB::readShaderFile(osg::Shader::FRAGMENT, frag));
-
-        ss->setAttributeAndModes(program.get(),
-            osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE
-        );
-    }
-    else
-    {
-        osg::ref_ptr<osg::Material> mat(new osg::Material());
-        mat->setColorMode(osg::Material::OFF);
-        ss->setAttributeAndModes(mat, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
-        ss->setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
-        ss->setTextureMode(0, GL_TEXTURE_2D, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-    }
+    osg::ref_ptr<osg::Program> program = new osg::Program();
+    program->addShader(osgDB::readShaderFile(osg::Shader::VERTEX, vert));
+    program->addShader(osgDB::readShaderFile(osg::Shader::FRAGMENT, frag));
+    ss->setAttributeAndModes(program.get(),
+        osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE
+    );
     return ss;
 }
 

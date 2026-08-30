@@ -142,6 +142,42 @@ So the GUI and windowing arguments against moving have largely gone away; the
 pipeline and the shaders are what is left, and they are a rewrite of the
 rendering half of the project.
 
+macOS is a further nudge in the same direction. Apple deprecated OpenGL in
+10.14 and caps the legacy context at 2.1, so opendf's shaders are pinned at
+`#version 120` there. VSG on macOS runs Vulkan through
+[MoltenVK](https://github.com/KhronosGroup/MoltenVK), which sits on Metal --
+the API Apple is actually maintaining -- so a VSG migration would replace
+the 2.1 pin with a modern backend on every platform at once.
+
+We tried a 3.3 Core context on macOS first (SDL context request + OSG traits
++ Program aliasing overrides + explicit attribute binding + `#version 330
+core` shaders and MRT `layout(location = N)`) and every screen-facing draw
+came out black. Debugging it produced the `OPENDF_GL_DIAG` harness -- a
+self-contained `osg::Drawable` that bypassed OSG entirely, managing its own
+program, VAO and VBO through raw `SDL_GL_GetProcAddress` entry points and
+logging `glGetError` at every step. It rendered a magenta fullscreen
+triangle on macOS 26 / Apple Silicon (M5 Pro, GL 4.1 Core) with zero GL
+errors, which proved the Core context, the shader work and Cocoa surface
+presentation were all fine; the failure was inside OSG 3.6.5's
+`Geometry::drawImplementation` under Core, which silently drops draws for
+its own `osg::Geometry` objects. Anything we drove manually paints; anything
+OSG orchestrates (deferred pipeline screen quads, the MyGUI backend, scene
+meshes) came out empty. OpenMW hits the same wall and short-circuits it in
+`components/shader/shadermanager.cpp` with `templateName = "compatibility/"
++ templateName;` and the comment "until core support is supported".
+
+So opendf on macOS is now on legacy 2.1 with `#version 120` shaders and
+OSG-orchestrated draws, matching OpenMW. The harness has been deleted now
+that it has delivered its verdict -- it was dead code in `pipeline.cpp`
+behind an off-by-default `#define`, and on legacy 2.1 it only reconfirms
+what already renders. Resurrect it from git history if a Core context or
+the VSG port is ever retried; it was last seen working (GLSL 120 and 330
+core, VAO optional, centre-pixel readback) just before its removal. It also
+transposes cleanly into a `GL_KHR_debug` callback on drivers that expose it
+(macOS Core does not) -- rename `drawImplementation` into a
+`glDebugMessageCallback` handler and log the message text instead of
+`glGetError`.
+
 Two things make this cheaper whenever it happens, and are worth doing anyway:
 keep rendering behind the `render/` seam so `world/` and `class/` do not reach
 for `osg::` directly, and keep shaders as external data files (they already

@@ -423,6 +423,12 @@ bool Engine::go(void)
         SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
         SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 
+        // No Core request on macOS: OSG 3.6.5's Geometry::drawImplementation
+        // silently drops draws under a Core context (proven with a
+        // bypass-OSG harness; see docs/ROADMAP.md), so we stay on Cocoa's
+        // legacy 2.1 profile and use #version 120 shaders. OpenMW ships the
+        // same workaround -- see components/shader/shadermanager.cpp:515.
+
         Log::get().stream()<< "Creating window "<<width<<"x"<<height<<", flags 0x"<<std::hex<<flags;
         mSDLWindow = SDL_CreateWindow("OpenDF", xpos, ypos, width, height, flags);
         if(mSDLWindow == nullptr)

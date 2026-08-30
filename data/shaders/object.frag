@@ -1,32 +1,29 @@
-#version 130
+#version 120
+#extension GL_EXT_texture_array : require
+#extension GL_ARB_draw_buffers : require
 
 uniform vec4 illumination_color;
 
 uniform sampler2DArray diffuseTex;
 
-in vec3 pos_viewspace;
-in vec3 n_viewspace;
-in vec3 t_viewspace;
-in vec3 b_viewspace;
-in vec4 TexCoords;
-in vec4 Color;
-
-out vec4 ColorData;
-out vec4 NormalData;
-out vec4 PositionData;
-out vec4 IlluminationData;
+varying vec3 pos_viewspace;
+varying vec3 n_viewspace;
+varying vec3 t_viewspace;
+varying vec3 b_viewspace;
+varying vec4 TexCoords;
+varying vec4 Color;
 
 void main()
 {
-    vec4 color = vec4(texture(diffuseTex, TexCoords.xyz).rgb, 0.0);
+    vec4 color = vec4(texture2DArray(diffuseTex, TexCoords.xyz).rgb, 0.0);
     vec4 nn = vec4(0.5, 0.5, 1.0, 1.0);
 
     mat3 nmat = mat3(normalize(t_viewspace),
                      normalize(b_viewspace),
                      normalize(n_viewspace));
 
-    ColorData    = color * vec4(Color.rgb, 1.0);
-    NormalData   = vec4(nmat*(nn.xyz - vec3(0.5)) + vec3(0.5), nn.w);
-    PositionData = vec4(pos_viewspace, gl_FragCoord.z);
-    IlluminationData = illumination_color;
+    gl_FragData[0] = color * vec4(Color.rgb, 1.0);
+    gl_FragData[1] = vec4(nmat*(nn.xyz - vec3(0.5)) + vec3(0.5), nn.w);
+    gl_FragData[2] = vec4(pos_viewspace, gl_FragCoord.z);
+    gl_FragData[3] = illumination_color;
 }

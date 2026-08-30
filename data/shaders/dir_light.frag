@@ -1,7 +1,8 @@
-#version 130
+#version 120
 #extension GL_ARB_texture_rectangle : enable
+#extension GL_ARB_draw_buffers : require
 
-in vec3 localLightDir;
+varying vec3 localLightDir;
 
 uniform vec4 ambient_color;
 uniform vec4 diffuse_color;
@@ -10,9 +11,6 @@ uniform vec4 specular_color;
 uniform sampler2DRect ColorTex;
 uniform sampler2DRect NormalTex;
 uniform sampler2DRect PosTex;
-
-out vec4 DiffuseData;
-out vec4 SpecularData;
 
 void main()
 {
@@ -37,6 +35,6 @@ void main()
     float amount = max(0.0, dot(h_viewspace, n_viewspace));
     vec3 spec = specular_color.rgb * s_viewspace * pow(amount, 32.0) * c_viewspace.a;
 
-    DiffuseData  = vec4(diff, 1.0);
-    SpecularData = vec4(spec, 1.0);
+    gl_FragData[0] = vec4(diff, 1.0);
+    gl_FragData[1] = vec4(spec, 1.0);
 }
