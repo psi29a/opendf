@@ -66,7 +66,56 @@ endif()
 find_package(OpenSceneGraph REQUIRED osgDB osgViewer osgGA osgUtil)
 find_package(SDL2 REQUIRED)
 find_package(OpenGL REQUIRED)
-find_package(MyGUI REQUIRED)
+
+# MyGUI isn't in Homebrew any more, so on macOS a fresh checkout has nothing
+# for FindMyGUI to locate. AUTO tries the system first and falls back to
+# FetchContent when nothing turns up; ON skips the search and always fetches;
+# OFF keeps the old behaviour and errors out if MyGUI isn't installed.
+set(OPENDF_FETCH_MYGUI AUTO CACHE STRING
+    "Fetch and build MyGUI in-tree when not found (ON/OFF/AUTO)")
+set_property(CACHE OPENDF_FETCH_MYGUI PROPERTY STRINGS AUTO ON OFF)
+
+if(NOT OPENDF_FETCH_MYGUI STREQUAL "ON")
+    if(OPENDF_FETCH_MYGUI STREQUAL "OFF")
+        find_package(MyGUI REQUIRED)
+    else()
+        find_package(MyGUI QUIET)
+    endif()
+endif()
+
+if(NOT MyGUI_FOUND)
+    message(STATUS "MyGUI not found -- fetching MyGUI 3.4.4 in-tree")
+    include(FetchContent)
+    # Matches the macOS CI build exactly: only MyGUIEngine, dummy render
+    # platform, no obsolete delegates. Forced into the cache because MyGUI's
+    # own CMake reads these before we add_subdirectory it, and because our
+    # AUTO detection below has to see MYGUI_DONT_USE_OBSOLETE=ON so the
+    # library and opendf agree about widget layout.
+    set(MYGUI_RENDERSYSTEM 1 CACHE STRING "" FORCE)       # 1 = Dummy, the smallest platform (0 isn't a valid value)
+    set(MYGUI_DONT_USE_OBSOLETE ON CACHE BOOL "" FORCE)
+    set(MYGUI_DISABLE_PLUGINS TRUE CACHE BOOL "" FORCE)   # skips the whole Plugins tree
+    foreach(_opt DEMOS TOOLS PLUGINS DOCS UNITTESTS TEST_APP WRAPPER)
+        set(MYGUI_BUILD_${_opt} OFF CACHE BOOL "" FORCE)
+    endforeach()
+    FetchContent_Declare(mygui
+        GIT_REPOSITORY https://github.com/MyGUI/mygui.git
+        GIT_TAG MyGUI3.4.4
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(mygui)
+    # opendf includes MyGUI as <MYGUI/MyGUI_Foo.h>, which only exists once
+    # MyGUI is installed. The in-tree layout is MyGUIEngine/include/MyGUI_Foo.h
+    # (flat, no MYGUI/ prefix), so synthesize the prefix with a symlink and
+    # point the include dir at its parent.
+    file(MAKE_DIRECTORY "${mygui_BINARY_DIR}/opendf-include-shim")
+    file(CREATE_LINK
+        "${mygui_SOURCE_DIR}/MyGUIEngine/include"
+        "${mygui_BINARY_DIR}/opendf-include-shim/MYGUI"
+        SYMBOLIC COPY_ON_ERROR)
+    set(MyGUI_LIBRARIES MyGUIEngine)
+    set(MyGUI_INCLUDE_DIRS "${mygui_BINARY_DIR}/opendf-include-shim")
+    set(MyGUI_FOUND TRUE)
+endif()
 
 # MyGUI's EventPair is either a CompositeEvent (obsolete delegates enabled) or a
 # bare Event, depending on MYGUI_DONT_USE_OBSOLETE. That choice changes the layout

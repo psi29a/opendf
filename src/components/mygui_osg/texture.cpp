@@ -1,6 +1,7 @@
 
 #include "texture.h"
 
+#include <cstdio>
 #include <iostream>
 
 #include <osg/Texture2D>
@@ -102,16 +103,22 @@ void Texture::loadFromFile(const std::string &fname)
             numelems = 2;
             break;
         case GL_RGB:
+        case GL_BGR:
             format = MyGUI::PixelFormat::R8G8B8;
             numelems = 3;
             break;
         case GL_RGBA:
+        case GL_BGRA:
             format = MyGUI::PixelFormat::R8G8B8A8;
             numelems = 4;
             break;
 
         default:
-            throw std::runtime_error("Unsupported pixel format");
+        {
+            char buf[16];
+            std::snprintf(buf, sizeof(buf), "0x%x", image->getPixelFormat());
+            throw std::runtime_error(std::string("Unsupported pixel format ") + buf);
+        }
     }
 
     image->flipVertical();
