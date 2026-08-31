@@ -80,6 +80,11 @@ class World : public WorldIface {
     // point lights the RDB places -- so it's created and dropped per location.
     osg::ref_ptr<osg::Node> mSunLight;
 
+    // The player's torch: a point light that rides the camera underground.
+    // Daggerfall Unity carries one too, which is why its dungeons stay
+    // navigable at the same 0.12 ambient we use.
+    osg::ref_ptr<osg::Node> mTorchLight;
+
     bool mFirstStart;
 
     void setSunLight(bool enable);

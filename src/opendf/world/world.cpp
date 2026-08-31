@@ -488,6 +488,22 @@ void World::setSunLight(bool enable)
         enable ? osg::Vec4f(0.537f, 0.549f, 0.627f, 1.0f)
                : osg::Vec4f(0.120f, 0.120f, 0.120f, 1.0f)
     );
+
+    // Player torch, matching Daggerfall Unity's EnablePlayerTorch: a white
+    // point light on the player, intensity 1.0, range 6 Unity units -- which
+    // is 240 Daggerfall units at MeshReader.GlobalScale (0.025). Without it
+    // the RDB lights alone leave dungeons far darker than DFU's, even though
+    // our ambient constant matches theirs exactly.
+    // ponytail: always on underground. DFU gates it on a held light source
+    // and dims it as the item burns down; that needs an inventory we don't
+    // have yet, and a torch you can't lose beats a dungeon you can't see.
+    if(!mTorchLight.valid())
+        mTorchLight = pipeline.createPointLight(-mCameraPos, 240.0f);
+    osg::StateSet *tss = mTorchLight->getOrCreateStateSet();
+    osg::Vec4f torch = enable ? osg::Vec4f(0.0f, 0.0f, 0.0f, 1.0f)
+                              : osg::Vec4f(1.0f, 1.0f, 1.0f, 1.0f);
+    tss->getOrCreateUniform("diffuse_color", osg::Uniform::FLOAT_VEC4)->set(torch);
+    tss->getOrCreateUniform("specular_color", osg::Uniform::FLOAT_VEC4)->set(torch);
 }
 
 
@@ -677,6 +693,11 @@ void World::update(float timediff)
     ));
     matf.preMultTranslate(mCameraPos);
     mViewer->getCamera()->setViewMatrix(matf);
+
+    // mCameraPos is the negated eye position, flipped in y/z the same way
+    // LightObject::load flips an RDB light, so the torch sits at -mCameraPos.
+    if(mTorchLight.valid())
+        mTorchLight->getStateSet()->getUniform("light_position")->set(-mCameraPos);
 
     if(guimode == GuiIface::Mode_Game)
         mCurrentSelection = castCameraToViewportRay(0.5f, 0.5f, 1024.0f, false);
