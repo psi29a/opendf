@@ -135,12 +135,30 @@ if it cannot find a `data-root`. Then:
 Command line options:
 
     -data <path>       add a data path (may be given more than once)
-    -log <file>        write the log to <file>
+    -log <file>        write the log to <file> instead of the default
     -devparm           enable debug-level logging
     -set <cvar> <val>  override a config variable for this run only
 
 `-set` wins over the config file and is never written back to it, so it is
 safe for one-off and scripted runs.
+
+The log goes next to the config files -- `$XDG_CONFIG_HOME/opendf/opendf.log`
+(`%AppData%\opendf\opendf.log` on Windows), falling back to
+`~/.config/opendf/` -- rather than into whatever directory you started the
+engine from. `-log` overrides it and is taken exactly as given, so a relative
+path there is still relative to the working directory.
+
+### Lighting
+
+Dungeon lighting follows Daggerfall Unity's values; `docs/ROADMAP.md` records
+which numbers come from where. Three cvars tune it, as percentages:
+
+    r_ambientscale     100   ambient light
+    r_torchscale       100   the player's torch
+    r_lightintensity    80   the lights placed in the dungeon
+
+Change them from the console and type `relight` to apply without reloading, or
+pass them with `-set` for a single run.
 
 ### Screenshots
 

@@ -41,6 +41,10 @@ public:
     virtual void dumpArea() const = 0;
     virtual void dumpBlocks() const = 0;
 
+    // Re-apply the lighting cvars (r_ambientscale, r_torchscale,
+    // r_lightintensity) to the live scene, for the `relight` command.
+    virtual void applyLightSettings() = 0;
+
     static WorldIface &get() { return sInstance; }
 };
 

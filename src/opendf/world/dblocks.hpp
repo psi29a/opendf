@@ -7,6 +7,8 @@
 #include <vector>
 #include <array>
 
+#include <osg/Vec3f>
+
 #include "misc/sparsearray.hpp"
 #include "referenceable.hpp"
 
@@ -64,6 +66,20 @@ struct DBlockHeader {
     Misc::SparseArray<std::unique_ptr<ModelObject>> mModels;
     Misc::SparseArray<std::unique_ptr<FlatObject>> mFlats;
     Misc::SparseArray<std::unique_ptr<LightObject>> mLights;
+
+    // Where this block sits in the dungeon grid, and whether it is a castle
+    // block. Daggerfall Unity brightens ambient a long way inside these
+    // (PlayerAmbientLight.CastleAmbientLight); the flag lives in the magnitude
+    // byte of the block's start marker, see load().
+    float mOriginX = 0.0f, mOriginZ = 0.0f;
+    bool mCastleBlock = false;
+
+    // True when P (in pre-flip object space) falls inside this block's cell.
+    bool contains(const osg::Vec3f &p) const
+    {
+        return p.x() >= mOriginX && p.x() < mOriginX+2048.0f
+            && p.z() >= mOriginZ && p.z() < mOriginZ+2048.0f;
+    }
 
     DBlockHeader();
     ~DBlockHeader();

@@ -13,6 +13,8 @@
 #include <osg/Program>
 #include <osg/Shader>
 #include <osg/Uniform>
+#include <osg/Polytope>
+#include <osg/NodeCallback>
 
 #include <osgDB/ReadFile>
 
@@ -369,14 +371,7 @@ public:
         const osg::FrameStamp *fs = nv->getFrameStamp();
         if(!fs) return;
 
-        // Reference time, not simulation time: engine.cpp's main loop passes
-        // the per-frame delta to viewer->frame(), which OSG takes as an
-        // absolute simulation time, so getSimulationTime() is pinned near
-        // 0.015 forever. Reference time is the viewer's own wall clock and
-        // advances regardless.
-        // ponytail: works around that rather than fixing it -- correcting the
-        // main loop is a separate change with its own blast radius.
-        const double now = fs->getReferenceTime();
+        const double now = fs->getSimulationTime();
         if(now < mNextTick) return;
         mNextTick = now + sTickRate;
 
@@ -404,6 +399,48 @@ public:
     }
 };
 
+// Each light is a fullscreen quad, so an off-screen light still costs a full
+// screen of fragments (the shader's discard only saves work after three
+// G-buffer fetches). The light pass runs under an ortho projection with
+// NO_CULLING, so OSG cannot cull these for us -- test the light's sphere of
+// influence against the *main* camera's frustum instead and skip the quad
+// entirely when it cannot affect anything visible. Daggerfall Unity does the
+// equivalent in DungeonLightHandler by disabling out-of-range lights.
+class LightCullCallback : public osg::NodeCallback
+{
+    const float mRadius;
+    osg::observer_ptr<osg::Camera> mMainPass;
+
+public:
+    LightCullCallback(float radius, osg::Camera *mainPass)
+      : mRadius(radius), mMainPass(mainPass) { }
+
+    void operator()(osg::Node *node, osg::NodeVisitor *nv) override
+    {
+        osg::ref_ptr<osg::Camera> main;
+        osg::StateSet *ss = node->getStateSet();
+        osg::Uniform *posUniform = ss ? ss->getUniform("light_position") : nullptr;
+        if(!mMainPass.lock(main) || !posUniform)
+        {
+            traverse(node, nv);
+            return;
+        }
+
+        // Read the position back rather than caching it, so a light that moves
+        // -- the player torch does, every frame -- is tested where it actually
+        // is. The radius is the base one, which flicker only ever dips below,
+        // so the sphere stays conservative.
+        osg::Vec3f pos;
+        posUniform->get(pos);
+
+        osg::Polytope frustum;
+        frustum.setToUnitFrustum();
+        frustum.transformProvidingInverse(main->getViewMatrix() * main->getProjectionMatrix());
+        if(frustum.contains(osg::BoundingSphere(pos, mRadius)))
+            traverse(node, nv);
+    }
+};
+
 } // namespace
 
 osg::Node* RenderPipeline::createPointLight(const osg::Vec3f &pos, float radius, bool animate)
@@ -419,6 +456,8 @@ osg::Node* RenderPipeline::createPointLight(const osg::Vec3f &pos, float radius,
     if(animate)
         radiusUniform->setUpdateCallback(new FlickerCallback(radius));
     ss->addUniform(radiusUniform.get());
+
+    light->setCullCallback(new LightCullCallback(radius, mMainPass.get()));
 
     mLightPass->addChild(light.get());
     return light.release();

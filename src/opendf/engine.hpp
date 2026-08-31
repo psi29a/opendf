@@ -35,6 +35,10 @@ class Engine {
     std::vector<const char*> mRootPaths;
     std::vector<std::pair<std::string,std::string>> mCVarOverrides;
 
+    // Set by -log. Without it the log goes next to settings.cfg in the user's
+    // config dir rather than into the working directory.
+    bool mLogPathSet = false;
+
     osg::ref_ptr<osg::Group> mSceneRoot;
 
     osg::ref_ptr<osg::Camera> mCamera;

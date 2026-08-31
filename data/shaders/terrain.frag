@@ -24,6 +24,13 @@ void main()
                      normalize(b_viewspace),
                      normalize(n_viewspace));
 
+    // Daggerfall's palette colours are authored for a gamma-2.2 display, so
+    // they are sRGB-ish, not linear. Lighting has to happen in linear space or
+    // multiplying by a light value darkens midtones badly; combiner.frag
+    // encodes back to sRGB at the end. The G-buffer is RGBA16F, so linear
+    // albedo stores without banding.
+    color.rgb = pow(color.rgb, vec3(2.2));
+
     gl_FragData[0] = color;
     gl_FragData[1] = vec4(nmat*(nn.xyz - vec3(0.5)) + vec3(0.5), nn.w);
     gl_FragData[2] = vec4(pos_viewspace, gl_FragCoord.z);

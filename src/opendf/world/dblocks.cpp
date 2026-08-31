@@ -338,6 +338,9 @@ DBlockHeader::~DBlockHeader()
 
 void DBlockHeader::load(std::istream &stream, size_t blockid, float x, float z, size_t regnum, size_t locnum)
 {
+    mOriginX = x;
+    mOriginZ = z;
+
     mUnknown1 = VFS::read_le32(stream);
     mWidth = VFS::read_le32(stream);
     mHeight = VFS::read_le32(stream);
@@ -412,6 +415,27 @@ void DBlockHeader::load(std::istream &stream, size_t blockid, float x, float z, 
 
             offset = next;
         }
+    }
+
+    // Castle blocks. Daggerfall Unity reads this off the block's start marker
+    // (TEXTURE.199 record 10) -- DaggerfallBillboard.cs treats a non-zero
+    // magnitude as "castle block", and PlayerAmbientLight then uses a much
+    // brighter ambient inside one.
+    //
+    // Our FlatObject::load reads the same bytes DFU does, but pairs magnitude
+    // and sound index into one 16-bit mFactionId (DFU builds its
+    // FactionOrMobileId from exactly those two bytes, low byte first), so the
+    // magnitude is the low byte.
+    // Scanned directly rather than through getObjectByTexture(), which treats
+    // a missing flat as an error worth logging. Most blocks simply have no
+    // start marker -- only the ones that do can carry water level or castle
+    // status -- so its absence here is the normal case, not a fault.
+    for(const std::unique_ptr<FlatObject> &flat : mFlats)
+    {
+        if(flat->mTexture != Marker_StartID)
+            continue;
+        mCastleBlock = (flat->mFactionId & 0xff) != 0;
+        break;
     }
 }
 

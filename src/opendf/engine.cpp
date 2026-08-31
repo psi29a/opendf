@@ -114,6 +114,11 @@ void makeDirRecurse(std::string path)
             err = mkdir(path.c_str(), S_IRWXU);
         }
     }
+    // mkdir -p semantics: a directory that already exists is success. Without
+    // this the helper throws the first time it is pointed at an existing
+    // config dir.
+    if(err != 0 && errno == EEXIST)
+        err = 0;
     if(err != 0)
     {
         std::stringstream sstr;
@@ -236,7 +241,10 @@ bool Engine::parseOptions(int argc, char *argv[])
         else if(strcasecmp(argv[i], "-log") == 0)
         {
             if(i < argc-1)
+            {
                 Log::get().setLog(argv[++i]);
+                mLogPathSet = true;
+            }
         }
         else if(strcasecmp(argv[i], "-devparm") == 0)
             Log::get().setLevel(Log::Level_Debug);
@@ -347,6 +355,19 @@ bool Engine::pumpEvents()
 
 bool Engine::go(void)
 {
+    // Default the log next to settings.cfg instead of dropping opendf.log into
+    // whatever directory the engine happened to be started from. -log still
+    // wins, and is taken exactly as given.
+    if(!mLogPathSet)
+    {
+        std::string path = getUserConfigDir();
+        if(!path.empty())
+        {
+            path += "/opendf";
+            makeDirRecurse(path);
+            Log::get().setLog(path+"/opendf.log");
+        }
+    }
     Log::get().initialize();
 
     // Init everything except audio (we will use OpenAL for that)
@@ -481,6 +502,16 @@ bool Engine::go(void)
             sstr<< "SDL_CreateWindow Error: "<<SDL_GetError();
             throw std::runtime_error(sstr.str());
         }
+
+        // SDL switches text input on with the window, which hands every
+        // keystroke to the platform input method -- on macOS that engages the
+        // Input Method Kit and is where the IMKCFRunLoopWakeUpReliable chatter
+        // comes from. We only want text input while the console is open, and
+        // with a non-Latin IME active a live input method can swallow keys
+        // before the game sees them. Input::handleKeyboard already turns it
+        // on for the console; its `if(!SDL_IsTextInputActive())` guard only
+        // makes sense if it starts off, so start it off.
+        SDL_StopTextInput();
 
         SDLUtil::graphicswindow_SDL2();
         osg::ref_ptr<osg::GraphicsContext::Traits> traits = new osg::GraphicsContext::Traits;
@@ -641,7 +672,13 @@ bool Engine::go(void)
 
         WorldIface::get().update(timediff);
 
-        viewer->frame(timediff);
+        // No argument: OSG then uses its own reference time as the simulation
+        // time. Passing timediff here set the simulation time to the *delta*
+        // (~0.015) every frame, so osg::FrameStamp::getSimulationTime() never
+        // advanced and anything driven by it -- osgAnimation, particles,
+        // osg::Sequence -- silently stood still. timediff is still what the
+        // game systems above are stepped with; it was only ever wrong for OSG.
+        viewer->frame();
 
         if(*r_shotframe > 0)
         {

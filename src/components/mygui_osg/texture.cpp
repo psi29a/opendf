@@ -102,6 +102,12 @@ void Texture::loadFromFile(const std::string &fname)
             format = MyGUI::PixelFormat::L8A8;
             numelems = 2;
             break;
+        // MyGUI has no BGR pixel format, so BGR(A) images are reported as
+        // R8G8B8(A8) while the bytes stay BGR. That is fine for drawing -- GL
+        // swizzles from the image's own format -- but it does mean lock() hands
+        // back bytes in a different order than getFormat() advertises. Nothing
+        // locks a file-loaded texture (MyGUI only locks ones it createManual'd),
+        // and converting here would throw away the BGR path macOS wants.
         case GL_RGB:
         case GL_BGR:
             format = MyGUI::PixelFormat::R8G8B8;

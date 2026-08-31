@@ -22,15 +22,24 @@ void main()
     vec3 toLight = lightPos_viewspace - p_viewspace;
     float dist = length(toLight);
 
-    // Falls to exactly zero at the light's radius (so a light never leaks past
-    // the volume it claims and never pops), but stays much brighter near the
-    // source than a plain linear ramp would.
-    float atten = clamp(1.0 - (dist*dist)/(light_radius*light_radius), 0.0, 1.0);
-    atten *= atten;
+    // Unity's built-in point light falloff, which is what Daggerfall Unity
+    // gets for its dungeon lights: 1/(1 + 25*(d/r)^2). That never quite
+    // reaches zero, so rescale it to hit exactly 0 at the radius the way the
+    // attenuation texture Unity samples does -- a light must not leak past
+    // the volume it claims, and must not pop when it ends.
+    //
+    // The obvious (1 - d^2/r^2)^2 is a much flatter curve: about 5x brighter
+    // at half the radius, which reads as broad soft pools instead of the
+    // tight bright cores classic-style lighting wants.
+    float t2 = (dist*dist) / (light_radius*light_radius);
+    float atten = clamp((1.0/(1.0 + 25.0*t2) - 1.0/26.0) * (26.0/25.0), 0.0, 1.0);
     if(atten <= 0.0)
         discard;
 
-    vec3 lightDir_viewspace = toLight / dist;
+    // dist can be exactly zero -- the torch rides the camera, so a surface can
+    // land on the light -- and atten is 1.0 there, so the discard above does
+    // not catch it. GLSL 1.20 leaves 0.0/0.0 undefined, so clamp the divisor.
+    vec3 lightDir_viewspace = toLight / max(dist, 1e-4);
 
     // Lambertian diffuse color. No ambient term here -- the lighting pass
     // blends GL_ONE/GL_ONE, and ambient is contributed once by dir_light.

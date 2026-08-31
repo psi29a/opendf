@@ -178,6 +178,13 @@ void Input::handleKeyboardEvent(const SDL_KeyboardEvent &evt)
         }
         else if(evt.keysym.sym == SDLK_F3)
             mViewer->getEventQueue()->keyPress(osgGA::GUIEventAdapter::KEY_F3);
+        else if(evt.keysym.sym == SDLK_F12)
+        {
+            // The ScreenCaptureHandler listens for KEY_F12 on the viewer's
+            // event queue, and SDL events never reach it on their own -- so
+            // without this the documented F12 screenshot key does nothing.
+            mViewer->getEventQueue()->keyPress(osgGA::GUIEventAdapter::KEY_F12);
+        }
 
     }
     else if(evt.state == SDL_RELEASED)

@@ -207,77 +207,79 @@ commitments:
 
 ## Lighting, measured against Daggerfall Unity
 
-Dungeon lighting is deliberately calibrated against DFU rather than eyeballed,
-so it is worth recording which numbers are theirs, which are ours, and what is
-still missing.
+Dungeon lighting is calibrated against DFU rather than eyeballed, so it is
+worth recording which numbers are theirs and which are ours.
 
-Matching DFU exactly:
+The single most important finding: **DFU renders in linear colour space**
+(`ProjectSettings.asset`, `m_ActiveColorSpace: 1`). It decodes sRGB textures to
+linear, lights in linear, and gamma-encodes on output. We were doing none of
+that -- multiplying gamma-encoded palette colours by linear light and writing
+the result straight out, which crushes midtones badly. Every DFU constant
+looked wrong here as a result, and the old `(1 - d^2/r^2)^2` falloff only
+looked acceptable because its excessive brightness cancelled the missing
+gamma. `object/sprite/terrain.frag` now decode albedo with `pow(c, 2.2)` into
+the RGBA16F G-buffer and `combiner.frag` encodes the lit result back; with
+that in place DFU's own numbers produce a sensible image.
 
-* **Dungeon ambient** `(0.12, 0.12, 0.12)` -- `PlayerAmbientLight.DungeonAmbientLight`.
+Matching DFU:
+
+* **Dungeon ambient** `(0.12, 0.12, 0.12)`, and **castle ambient** `0.58`
+  inside castle blocks -- `PlayerAmbientLight`. The castle flag comes from the
+  magnitude byte of a block's start marker (TEXTURE.199 record 10), the same
+  place `DaggerfallBillboard.cs` reads it; `World::updateCurrentBlock` tracks
+  which block the camera stands in so it changes as you walk.
 * **Light range** `radius * 3` -- `RDBLayout.AddLight`.
-* **Player torch** (`World::setSunLight`) -- a white point light on the camera,
-  radius 240. DFU's `EnablePlayerTorch` uses range 6 Unity units, which is 240
-  Daggerfall units at `MeshReader.GlobalScale` (0.025). Without it the RDB
-  lights alone leave dungeons far darker than DFU's, even at identical ambient;
-  adding it roughly doubles the brightness of the floor near the player and
-  leaves the far tunnel alone.
-* **Light flicker** (`FlickerCallback` in `render/pipeline.cpp`) -- DFU animates
-  dungeon and city lights but not interior ones (`Animate` is set on the Dungeon
-  and City light prefabs, clear on Interior). It varies *radius*, never
-  intensity: 14 ticks a second, each cycle picking a random target in
-  `[base - Variance, base]` and creeping toward it at `Speed` per tick, so the
-  light only ever dips below its base and drifts back. We use the same numbers
-  converted to Daggerfall units. Only RDB lights flicker; the torch is steady,
-  matching DFU, whose torch gutters only when the light item is nearly spent.
+* **Light intensity** 0.8 -- the `m_Intensity` on DFU's dungeon light prefab,
+  applied through `r_lightintensity`.
+* **Falloff** `1/(1 + 25*(d/r)^2)`, Unity's built-in point light shape,
+  rescaled to reach exactly zero at the radius so a light neither leaks past
+  its volume nor pops when it ends.
+* **Player torch** -- a white point light on the camera, radius 240. DFU's
+  `EnablePlayerTorch` uses range 6 Unity units, which is 240 Daggerfall units
+  at `MeshReader.GlobalScale` (0.025).
+* **Light flicker** (`FlickerCallback`) -- DFU animates dungeon and city lights
+  but not interior ones. It varies *radius*, never intensity: 14 ticks a
+  second, each cycle picking a random target in `[base - Variance, base]` and
+  creeping toward it, so a light only ever dips below base and drifts back.
+  Only RDB lights flicker; the torch is steady, matching DFU, whose torch
+  gutters only when the light item is nearly spent.
 
 Ours, not DFU's:
 
-* **Falloff.** We use `(1 - d^2/r^2)^2`; DFU gets Unity's built-in point light
-  falloff, which is far more concentrated near the source. At half the radius
-  ours is roughly 4x brighter. Ours reads as broad soft pools, DFU's as tight
-  bright cores.
-* **Light intensity.** DFU's dungeon light prefab sets `m_Intensity: 0.8`; our
-  point lights have no intensity at all and inherit the light pass default of
-  1.0.
-
-  These two are compensating errors, both pointing brighter. Change one without
-  the other and the result moves further from DFU, not closer -- they get fixed
-  together or not at all.
-* **Exterior ambient** `(0.537, 0.549, 0.627)` is invented. DFU lerps
+* **Exterior ambient** `(0.537, 0.549, 0.627)` is invented, and was tuned by
+  eye *before* the gamma fix, so it is now certainly too bright. DFU lerps
   `ExteriorNightAmbientLight (0.25)` to `ExteriorNoonAmbientLight (0.9)` by
-  daylight scale. Ours is a fixed overcast-midday stand-in that cannot track
-  time of day, because there is no time of day yet.
+  daylight scale; ours is a fixed stand-in that cannot track time of day
+  because there is no time of day yet. Worth retuning once there is.
 * **Ambient is a floor, not a base.** `dir_light.frag` computes
-  `max(ambient, diffuse * N.L)`, while Unity adds ambient to everything. Ours
+  `max(ambient, diffuse * N.L)` where Unity adds ambient to everything, so ours
   has more contrast between lit and unlit surfaces.
 
-Missing:
+Tuning knobs, as percentages because the cvar system has no float type. The
+`relight` console command re-applies all three without reloading:
 
-* **Castle and special-area ambient.** DFU switches to 0.58 -- nearly 5x the
-  dungeon value -- inside castle blocks and special areas, so Wayrest and the
-  main-story castles are far darker here than intended. `CastleBlock` is
-  derivable rather than curated (it comes from a billboard flat's
-  `resource.Magnitude != 0`, see `DaggerfallBillboard.cs`), but consuming it
-  needs per-block tracking of where the player is standing, which nothing else
-  needs yet.
+    r_ambientscale     100   scales whichever ambient is active
+    r_torchscale       100   the player torch
+    r_lightintensity    80   RDB point lights; DFU uses 0.8
+
+Still missing:
+
 * **Interior (building) ambient.** DFU has `InteriorAmbientLight` and a night
   variant; we only have sun-on and sun-off.
-* **User scaling.** DFU exposes `DungeonAmbientLightScale`,
-  `NightAmbientLightScale` and `PlayerTorchLightScale`. We have no cvars for
-  any of it.
+* **Special-area ambient.** DFU has `SpecialAreaLight` (also 0.58) for e.g. the
+  Daggerfall castle treasure room. It is tracked separately from the castle
+  flag and we do not read it.
+* **Night ambient scaling.** `NightAmbientLightScale` has no meaning without a
+  day/night cycle, so there is no cvar for it.
 
-One engine bug surfaced by this work and left unfixed: `engine.cpp`'s main loop
-calls `viewer->frame(timediff)`, passing the per-frame *delta* where OSG expects
-an absolute simulation time. `osg::FrameStamp::getSimulationTime()` is therefore
-pinned near 0.015 for the life of the process, and anything driven by it --
-osgAnimation, particle systems, `osg::Sequence` -- would silently never advance.
-`FlickerCallback` sidesteps it by using `getReferenceTime()`. Fixing the main
-loop is a small change with a wide blast radius and deserves to be its own.
-
-Also worth noting: `createPointLight` builds a *fullscreen* quad per light, so
-every light shades every pixel and the shader's `discard` only saves work after
-three G-buffer fetches. Fine for Privateer's Hold, but it scales with lights x
-screen pixels, and a dense block will hurt.
+Performance: each light is a *fullscreen* quad, so an off-screen light would
+otherwise cost a full screen of fragments (the shader's `discard` only saves
+work after three G-buffer fetches). The light pass runs under an ortho
+projection with `NO_CULLING`, so OSG cannot cull them for us;
+`LightCullCallback` tests each light's sphere against the *main* camera's
+frustum instead. At the Privateer's Hold spawn that skips 43 of 72 lights.
+DFU does the equivalent in `DungeonLightHandler`. Replacing the quads with real
+light volumes would go further, and has not been needed yet.
 
 ## Curated tables carried over from Daggerfall Unity
 
