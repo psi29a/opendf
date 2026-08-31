@@ -17,6 +17,7 @@ namespace osg
     class StateSet;
 
     class Vec2f;
+    class Vec3f;
 }
 
 namespace DF
@@ -78,6 +79,9 @@ public:
 
     osg::Node *createDirectionalLight();
     void removeDirectionalLight(osg::Node *node);
+
+    osg::Node *createPointLight(const osg::Vec3f &pos, float radius);
+    void removePointLight(osg::Node *node);
 
     void toggleDebugMapDisplay();
 

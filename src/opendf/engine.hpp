@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <utility>
 
 #include <osg/ref_ptr>
 
@@ -32,6 +33,7 @@ class Engine {
     SDL_Window *mSDLWindow;
 
     std::vector<const char*> mRootPaths;
+    std::vector<std::pair<std::string,std::string>> mCVarOverrides;
 
     osg::ref_ptr<osg::Group> mSceneRoot;
 

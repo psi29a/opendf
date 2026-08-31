@@ -76,7 +76,7 @@ class TexHeader {
 
 public:
     //static const uint16_t sUncompressed  = 0x0000;
-    static const uint16_t sRleCompressed = 0x0002;
+    //static const uint16_t sRleCompressed = 0x0002; // treated as uncompressed
     static const uint16_t sImageRle  = 0x0108;
     static const uint16_t sRecordRle = 0x1108;
     void load(std::istream &stream)
@@ -178,6 +178,97 @@ osg::Image *TexLoader::loadUncompressedSingle(size_t width, size_t height, const
     return image;
 }
 
+// Decode one frame of an ImageRle (0x0108) or RecordRle (0x1108) record. Both
+// share the same on-disk layout, decoded here as a per-row "special row header"
+// table -- so their handling is identical, only the compression code in the
+// TEXTURE record's header differs. Cross-checked against Daggerfall Unity's
+// TextureFile.cs ReadRle() (Assets/Scripts/API/TextureFile.cs).
+//
+// Layout, per frame:
+//   dataOffset + frame*height*4:
+//     height * { int16 rowOffset, uint16 rowEncoding }
+//   rowOffset is measured from the record start (entryOffset), NOT dataOffset.
+//   rowEncoding == 0x8000 marks the row as RLE:
+//     uint16 rowWidth
+//     stream of int16 probe values:
+//       probe < 0 -> repeat next byte |probe| times
+//       probe > 0 -> copy |probe| verbatim bytes
+//   anything else means the row is width raw palette bytes.
+void TexLoader::loadRleFrame(osg::Image *image, const Resource::Palette &palette,
+                             std::istream &stream, uint32_t entryOffset,
+                             uint32_t dataOffset, size_t width, size_t height,
+                             size_t frame)
+{
+    static constexpr uint16_t RleEncoded = 0x8000;
+    struct RowHeader { int16_t offset; uint16_t encoding; };
+
+    if(!stream.seekg(entryOffset + dataOffset + height * frame * 4))
+        throw std::runtime_error("Failed to seek to RLE row headers");
+
+    std::vector<RowHeader> headers(height);
+    for(RowHeader &h : headers)
+    {
+        h.offset   = static_cast<int16_t>(VFS::read_le16(stream));
+        h.encoding = VFS::read_le16(stream);
+    }
+
+    std::vector<uint8_t> row(width);
+    for(size_t y = 0; y < height; ++y)
+    {
+        if(!stream.seekg(entryOffset + headers[y].offset))
+            throw std::runtime_error("Failed to seek to RLE row data");
+
+        std::fill(row.begin(), row.end(), uint8_t{0});
+
+        if(headers[y].encoding == RleEncoded)
+        {
+            uint16_t rowWidth = VFS::read_le16(stream);
+            size_t x = 0;
+            while(x < rowWidth && stream)
+            {
+                int16_t probe = static_cast<int16_t>(VFS::read_le16(stream));
+                if(probe == 0)
+                    break; // ponytail: avoid the infinite loop DFU also has; no known files hit this
+                // Always consume the whole run from the stream; only the
+                // write into row[] is clamped, so an over-long row can't
+                // desync the following probes.
+                if(probe < 0)
+                {
+                    size_t count = static_cast<size_t>(-probe);
+                    uint8_t pixel = stream.get();
+                    for(size_t i = 0; i < count; ++i, ++x)
+                    {
+                        if(x < width) row[x] = pixel;
+                    }
+                }
+                else
+                {
+                    size_t count = static_cast<size_t>(probe);
+                    for(size_t i = 0; i < count; ++i, ++x)
+                    {
+                        uint8_t pixel = stream.get();
+                        if(x < width) row[x] = pixel;
+                    }
+                }
+            }
+        }
+        else
+        {
+            stream.read(reinterpret_cast<char*>(row.data()), width);
+        }
+
+        unsigned char *dst = image->data(0, y);
+        for(size_t x = 0; x < width; ++x)
+        {
+            const Resource::PaletteEntry &c = palette[row[x]];
+            *(dst++) = c.r;
+            *(dst++) = c.g;
+            *(dst++) = c.b;
+            *(dst++) = (row[x] == 0) ? 0 : 255;
+        }
+    }
+}
+
 void TexLoader::loadUncompressedMulti(osg::Image *image, const Resource::Palette &palette, std::istream &stream)
 {
     size_t width = VFS::read_le16(stream);
@@ -258,38 +349,53 @@ ImagePtrArray TexLoader::load(std::istream &stream, const TexEntryHeader &texent
         // Allocate a dummy image
         images.push_back(createDummyImage());
     }
-    else if(texhdr.getFrameCount() == 1)
-    {
-        osg::ref_ptr<osg::Image> image;
-
-        if(texhdr.getCompression() == texhdr.sRleCompressed)
-            std::cerr<< "Unhandled RleCompressed compression type"<< std::endl;
-        else if(texhdr.getCompression() == texhdr.sImageRle)
-            std::cerr<< "Unhandled ImageRle compression type"<< std::endl;
-        else if(texhdr.getCompression() == texhdr.sRecordRle)
-            std::cerr<< "Unhandled RecordRle compression type"<< std::endl;
-        else //if(texhdr.getCompression() == texhdr.sUncompressed)
-        {
-            if(!stream.seekg(texentry.getOffset() + texhdr.getDataOffset()))
-                throw std::runtime_error("Failed to seek to image offset");
-
-            image = loadUncompressedSingle(texhdr.getWidth(), texhdr.getHeight(), palette, stream);
-        }
-
-        if(!image)
-            image = createDummyImage();
-
-        images.push_back(image);
-    }
     else
     {
-        if(texhdr.getCompression() == texhdr.sRleCompressed)
-            std::cerr<< "Unhandled RleCompressed compression type"<< std::endl;
-        else if(texhdr.getCompression() == texhdr.sImageRle)
-            std::cerr<< "Unhandled ImageRle compression type"<< std::endl;
-        else if(texhdr.getCompression() == texhdr.sRecordRle)
-            std::cerr<< "Unhandled RecordRle compression type"<< std::endl;
-        else //if(texhdr.getCompression() == texhdr.sUncompressed)
+        // Compression 0x0002 (RleCompressed) despite the name is stored as
+        // uncompressed pixel data; DFU's TextureFile.cs treats it the same.
+        // 0x0108 (ImageRle) and 0x1108 (RecordRle) share the special-row-header
+        // decoder, only the record-header code differs.
+        const bool isRle = (texhdr.getCompression() == texhdr.sImageRle
+                         || texhdr.getCompression() == texhdr.sRecordRle);
+
+        if(texhdr.getFrameCount() == 1)
+        {
+            osg::ref_ptr<osg::Image> image(new osg::Image());
+            image->allocateImage(texhdr.getWidth(), texhdr.getHeight(), 1,
+                                 GL_RGBA, GL_UNSIGNED_BYTE);
+
+            if(isRle)
+            {
+                loadRleFrame(image, palette, stream, texentry.getOffset(),
+                             texhdr.getDataOffset(), texhdr.getWidth(),
+                             texhdr.getHeight(), 0);
+            }
+            else
+            {
+                if(!stream.seekg(texentry.getOffset() + texhdr.getDataOffset()))
+                    throw std::runtime_error("Failed to seek to image offset");
+                image = loadUncompressedSingle(texhdr.getWidth(), texhdr.getHeight(), palette, stream);
+            }
+
+            if(!image)
+                image = createDummyImage();
+
+            images.push_back(image);
+        }
+        else if(isRle)
+        {
+            for(uint32_t frame = 0; frame < texhdr.getFrameCount(); ++frame)
+            {
+                osg::ref_ptr<osg::Image> image(new osg::Image());
+                image->allocateImage(texhdr.getWidth(), texhdr.getHeight(), 1,
+                                     GL_RGBA, GL_UNSIGNED_BYTE);
+                loadRleFrame(image, palette, stream, texentry.getOffset(),
+                             texhdr.getDataOffset(), texhdr.getWidth(),
+                             texhdr.getHeight(), frame);
+                images.push_back(image);
+            }
+        }
+        else
         {
             if(!stream.seekg(texentry.getOffset() + texhdr.getDataOffset()))
                 throw std::runtime_error("Failed to seek to image offset");
@@ -305,14 +411,14 @@ ImagePtrArray TexLoader::load(std::istream &stream, const TexEntryHeader &texent
 
                 osg::Image *image = images.back();
                 image->allocateImage(texhdr.getWidth(), texhdr.getHeight(), 1,
-                                    GL_RGBA, GL_UNSIGNED_BYTE);
+                                     GL_RGBA, GL_UNSIGNED_BYTE);
 
                 loadUncompressedMulti(image, palette, stream);
             }
-        }
 
-        if(images.empty())
-            images.push_back(createDummyImage());
+            if(images.empty())
+                images.push_back(createDummyImage());
+        }
     }
 
     return images;

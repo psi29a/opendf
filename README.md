@@ -140,9 +140,26 @@ if it cannot find a `data-root`. Then:
 
 Command line options:
 
-    -data <path>    add a data path (may be given more than once)
-    -log <file>     write the log to <file>
-    -devparm        enable debug-level logging
+    -data <path>       add a data path (may be given more than once)
+    -log <file>        write the log to <file>
+    -devparm           enable debug-level logging
+    -set <cvar> <val>  override a config variable for this run only
+
+`-set` wins over the config file and is never written back to it, so it is
+safe for one-off and scripted runs.
+
+### Screenshots
+
+Press **F12**, or type `screenshot [path]` in the console.
+
+For non-interactive use -- checking what the renderer actually produced
+without a window to look at -- `r_shotframe` renders that many frames, writes
+one PNG, and quits:
+
+    ./build/opendf -set r_shotframe 4 -set r_shotfile /tmp/shot
+
+That writes `/tmp/shot_0_0.png` and exits. `r_shotframe = 0` (the default)
+disables it entirely.
 
 ## License
 

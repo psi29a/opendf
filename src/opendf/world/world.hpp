@@ -11,6 +11,7 @@
 #include <osg/Referenced>
 #include <osg/ref_ptr>
 #include <osg/Vec3>
+#include <osg/Node>
 
 #include "itembase.hpp"
 #include "pitems.hpp"
@@ -75,7 +76,13 @@ class World : public WorldIface {
     osg::Vec3f mCameraPos;
     osg::Vec3f mCameraRot;
 
+    // The outdoor sun. Dungeons don't get one -- their only light is the
+    // point lights the RDB places -- so it's created and dropped per location.
+    osg::ref_ptr<osg::Node> mSunLight;
+
     bool mFirstStart;
+
+    void setSunLight(bool enable);
 
     World();
     ~World();

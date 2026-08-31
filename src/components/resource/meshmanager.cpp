@@ -1,5 +1,8 @@
 
 #include <cstdint>
+#include <cassert>
+#include <algorithm>
+#include <iterator>
 #include "meshmanager.hpp"
 
 #include <osg/Node>
@@ -172,6 +175,89 @@ osg::ref_ptr<osg::Node> MeshManager::get(size_t idx)
     return geode;
 }
 
+namespace
+{
+
+// Flats that emit their own light rather than merely reflecting it: fires,
+// torches, braziers, glowing creatures. Daggerfall stores no flag for this, so
+// like Daggerfall Unity (TextureReader.cs emissiveTextures) it has to be a
+// list. Values are opendf texture ids, i.e. (archive << 7) | record.
+const uint16_t sEmissiveFlats[] = {
+  // archive 87 -- fireplace
+    11136,
+  // archive 101 -- lights (lit)
+    12930, 12931, 12933, 12934, 12935, 12936, 12937, 12938,
+    12939, 12940,
+  // archive 190 -- lights
+    24323, 24324, 24325,
+  // archive 200 -- lights
+    25607, 25608, 25609, 25610,
+  // archive 202 -- statue
+    25858,
+  // archive 208 -- brewing potion
+    26626,
+  // archive 210 -- dungeon light fixtures
+    26880, 26881, 26882, 26883, 26884, 26885, 26886, 26888,
+    26889, 26891, 26893, 26894, 26895, 26896, 26897, 26898,
+    26899, 26900, 26901, 26902, 26903, 26904, 26905, 26906,
+    26907, 26908, 26909,
+  // archive 253 -- dungeon misc flats
+    32394, 32401, 32402, 32403, 32406, 32425, 32432, 32433,
+    32434, 32435, 32436, 32459, 32461,
+  // archive 273 -- ghost
+    34944, 34945, 34946, 34947, 34948, 34949, 34950, 34951,
+    34952, 34953, 34954, 34955, 34956, 34957, 34958,
+  // archive 278 -- spectre
+    35584, 35585, 35586, 35587, 35588, 35589, 35590, 35591,
+    35592, 35593, 35594, 35595, 35596, 35597, 35598,
+  // archive 280 -- fire daedra
+    35840, 35841, 35842, 35843, 35844, 35845, 35846, 35847,
+    35848, 35849, 35850, 35851, 35852, 35853, 35854, 35855,
+    35856, 35857, 35858, 35859,
+  // archive 281 -- daedra lord
+    35968, 35969, 35970, 35971, 35972, 35973, 35974, 35975,
+    35976, 35977, 35978, 35979, 35980, 35981, 35982, 35983,
+    35984, 35985, 35986, 35987,
+  // archive 290 -- flame atronach
+    37120, 37121, 37122, 37123, 37124, 37125, 37126, 37127,
+    37128, 37129, 37130, 37131, 37132, 37133, 37134, 37135,
+    37136, 37137, 37138, 37139,
+  // archive 356
+    45568, 45570, 45571,
+  // archive 375
+    48000, 48001,
+  // archive 376
+    48128, 48129,
+  // archive 377
+    48256, 48257,
+  // archive 378
+    48384, 48385,
+  // archive 379
+    48512, 48513,
+  // archive 380
+    48643, 48645,
+  // archive 400
+    51202, 51203,
+  // archive 405
+    51842,
+  // archive 434
+    55555, 55557,
+  // archive 473
+    60544, 60545, 60546, 60547, 60548, 60549, 60550, 60551,
+    60552, 60553, 60554, 60555, 60556, 60557, 60558,
+};
+
+bool isEmissiveFlat(size_t texid)
+{
+    // The table is binary-searched, so a mis-ordered entry would silently stop
+    // matching rather than fail loudly.
+    assert(std::is_sorted(std::begin(sEmissiveFlats), std::end(sEmissiveFlats)));
+    return std::binary_search(std::begin(sEmissiveFlats), std::end(sEmissiveFlats),
+                              static_cast<uint16_t>(texid));
+}
+
+} // namespace
+
 osg::ref_ptr<osg::Node> MeshManager::loadFlat(size_t texid, bool centered, size_t *num_frames)
 {
     auto iter = mFlatCache.find(std::make_pair(texid, centered));
@@ -261,6 +347,12 @@ osg::ref_ptr<osg::Node> MeshManager::loadFlat(size_t texid, bool centered, size_
     ss->setAttributeAndModes(new osg::AlphaFunc(osg::AlphaFunc::LESS, 0.5f));
     ss->addUniform(new osg::Uniform("diffuseTex", 0));
     ss->setTextureAttribute(0, tex);
+    // sprite.frag writes this straight into the diffuse light buffer (the main
+    // pass's COLOR_BUFFER3), so a lit flat shows its own albedo at full
+    // brightness instead of waiting on a light to reach it. Texels the alpha
+    // test drops never get here, so the glow keeps the sprite's shape.
+    if(isEmissiveFlat(texid))
+        ss->addUniform(new osg::Uniform("illumination_color", osg::Vec4f(1.0f, 1.0f, 1.0f, 1.0f)));
 
     if(centered)
         bb->addDrawable(geometry);

@@ -12,6 +12,8 @@
 
 #include <osgViewer/Viewer>
 #include <osg/Light>
+#include <osg/Uniform>
+#include <osg/StateSet>
 #include <osg/Quat>
 
 #include "components/vfs/manager.hpp"
@@ -361,6 +363,7 @@ void World::deinitialize()
 {
     mExterior.clear();
     mDungeon.clear();
+    mSunLight = nullptr;
     Renderer::get().setObjectRoot(nullptr);
     mViewer = nullptr;
 }
@@ -454,6 +457,40 @@ bool World::getExteriorByName(const std::string &name, size_t &regnum, size_t &m
     return false;
 }
 
+// The "global light" quad is always present: dir_light.frag computes
+// max(ambient, diffuse*N.L), so with a black diffuse it contributes just the
+// flat ambient term -- and it is the only thing that consumes ambient_color.
+// Outdoors that quad is a real sun over a bright sky ambient; underground the
+// sun goes black and the ambient drops to a dungeon level, leaving the RDB's
+// point lights to do the actual lighting.
+void World::setSunLight(bool enable)
+{
+    RenderPipeline &pipeline = RenderPipeline::get();
+
+    if(!mSunLight.valid())
+    {
+        osg::Vec3f lightDir(70.f, -100.f, 10.f);
+        lightDir.normalize();
+        mSunLight = pipeline.createDirectionalLight();
+        mSunLight->getOrCreateStateSet()->addUniform(
+            new osg::Uniform("light_direction", lightDir));
+    }
+
+    osg::StateSet *ss = mSunLight->getOrCreateStateSet();
+    osg::Vec4f sun = enable ? osg::Vec4f(1.0f, 0.988f, 0.933f, 1.0f)
+                            : osg::Vec4f(0.0f, 0.0f, 0.0f, 1.0f);
+    ss->getOrCreateUniform("diffuse_color", osg::Uniform::FLOAT_VEC4)->set(sun);
+    ss->getOrCreateUniform("specular_color", osg::Uniform::FLOAT_VEC4)->set(
+        enable ? osg::Vec4f(1.0f, 1.0f, 1.0f, 1.0f) : osg::Vec4f(0.0f, 0.0f, 0.0f, 1.0f));
+
+    // Dungeon ambient matches Daggerfall Unity's PlayerAmbientLight.
+    pipeline.getLightingStateSet()->getUniform("ambient_color")->set(
+        enable ? osg::Vec4f(0.537f, 0.549f, 0.627f, 1.0f)
+               : osg::Vec4f(0.120f, 0.120f, 0.120f, 1.0f)
+    );
+}
+
+
 void World::loadExterior(int regnum, int extid)
 {
     const MapRegion &region = mRegions.at(regnum);
@@ -465,6 +502,8 @@ void World::loadExterior(int regnum, int extid)
     mCurrentExterior = &extloc;
     mCurrentDungeon = nullptr;
     mCurrentSelection = InvalidHandle;
+
+    setSunLight(true);
 
     uint8_t climate = getClimateValue(extloc.mX/256, extloc.mY/256);
     Log::get().stream()<< "Climate "<<(int)climate;
@@ -534,6 +573,8 @@ void World::loadDungeonByExterior(int regnum, int extid)
         mCurrentExterior = &extloc;
         mCurrentDungeon = &dinfo;
         mCurrentSelection = InvalidHandle;
+
+        setSunLight(false);
 
         uint8_t climate = getClimateValue(extloc.mX/256, extloc.mY/256);
         Log::get().stream()<< "Climate "<<(int)climate;

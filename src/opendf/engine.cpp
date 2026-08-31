@@ -131,6 +131,34 @@ CVAR(CVarInt, vid_width, 1280, 0);
 CVAR(CVarInt, vid_height, 720, 0);
 CVAR(CVarBool, vid_fullscreen, false);
 
+// Screenshots. r_shotfile is the output prefix; OSG appends a serial number
+// and the extension. r_shotframe exists for non-interactive verification:
+// render that many frames, write one shot, and quit -- which is the only way
+// to see what the renderer actually produced without a live window to look at.
+CVAR(CVarString, r_shotfile, "opendf_shot");
+CVAR(CVarInt, r_shotframe, 0, 0);
+
+namespace
+{
+    osg::ref_ptr<osgViewer::ScreenCaptureHandler> sScreenCapture;
+    osgViewer::Viewer *sCaptureViewer = nullptr;
+}
+
+CCMD(screenshot)
+{
+    if(!sScreenCapture.valid() || !sCaptureViewer)
+    {
+        Log::get().stream(Log::Level_Error)<< "Screen capture is not available";
+        return;
+    }
+    if(!params.empty())
+        sScreenCapture->setCaptureOperation(
+            new osgViewer::ScreenCaptureHandler::WriteToFile(
+                params, "png", osgViewer::ScreenCaptureHandler::WriteToFile::SEQUENTIAL_NUMBER));
+    sScreenCapture->captureNextFrame(*sCaptureViewer);
+    Log::get().stream()<< "Screenshot queued";
+}
+
 CCMD(qqq)
 {
     SDL_Event evt{};
@@ -212,6 +240,16 @@ bool Engine::parseOptions(int argc, char *argv[])
         }
         else if(strcasecmp(argv[i], "-devparm") == 0)
             Log::get().setLevel(Log::Level_Debug);
+        else if(strcasecmp(argv[i], "-set") == 0)
+        {
+            // Applied after the config file loads, so it wins over it without
+            // having to edit (and permanently alter) the user's opendf.cfg.
+            if(i < argc-2)
+            {
+                mCVarOverrides.emplace_back(argv[i+1], argv[i+2]);
+                i += 2;
+            }
+        }
         else
         {
             std::stringstream str;
@@ -340,6 +378,12 @@ bool Engine::go(void)
         const Settings::ConfigSection &cvars = cf.getSection("CVars");
         for(const Settings::ConfigSection::value_type &cvar : cvars)
             CVar::setByName(cvar.first, cvar.second);
+
+        for(const auto &cvar : mCVarOverrides)
+        {
+            Log::get().stream()<< "  -set "<<cvar.first<<" = "<<cvar.second;
+            CVar::setByName(cvar.first, cvar.second);
+        }
     }
 
     Log::get().message("Initializing VFS...");
@@ -525,17 +569,8 @@ bool Engine::go(void)
             *r_fov, pipeline.getAspectRatio(), 10.0, 10000.0
         ));
 
-        // Add a light so we can see
-        osg::Vec3f lightDir(70.f, -100.f, 10.f);
-        lightDir.normalize();
-        osg::ref_ptr<osg::Node> light = pipeline.createDirectionalLight();
-        osg::StateSet *ss = light->getOrCreateStateSet();
-        ss->addUniform(new osg::Uniform("light_direction", lightDir));
-        ss->addUniform(new osg::Uniform("diffuse_color", osg::Vec4f(1.0f, 0.988f, 0.933f, 1.0f)));
-        ss->addUniform(new osg::Uniform("specular_color", osg::Vec4f(1.0f, 1.0f, 1.0f, 1.0f)));
-        pipeline.getLightingStateSet()->getUniform("ambient_color")->set(
-            osg::Vec4f(0.537f, 0.549f, 0.627f, 1.0f)
-        );
+        // The sun and the ambient level belong to the location, so World sets
+        // them up when it loads one (see World::setSunLight).
     }
 
     {
@@ -584,7 +619,16 @@ bool Engine::go(void)
     // Region: Daggerfall, Location: Privateer's Hold
     WorldIface::get().loadDungeonByExterior(17, 179);
 
+    sScreenCapture = new osgViewer::ScreenCaptureHandler(
+        new osgViewer::ScreenCaptureHandler::WriteToFile(
+            *r_shotfile, "png", osgViewer::ScreenCaptureHandler::WriteToFile::SEQUENTIAL_NUMBER), 1);
+    // F12; the default is 'c', which collides with movement keys.
+    sScreenCapture->setKeyEventTakeScreenShot(osgGA::GUIEventAdapter::KEY_F12);
+    viewer->addEventHandler(sScreenCapture.get());
+    sCaptureViewer = viewer.get();
+
     // And away we go!
+    int framenum = 0;
     Uint32 last_tick = SDL_GetTicks();
     while(!viewer->done() && pumpEvents())
     {
@@ -598,11 +642,28 @@ bool Engine::go(void)
         WorldIface::get().update(timediff);
 
         viewer->frame(timediff);
+
+        if(*r_shotframe > 0)
+        {
+            // One shot, then out. Capturing happens on the following frame, so
+            // give it one more before quitting.
+            if(++framenum == *r_shotframe)
+                sScreenCapture->captureNextFrame(*viewer);
+            else if(framenum > *r_shotframe)
+                break;
+        }
     }
     Log::get().message("Main loop shutting down...");
+    sScreenCapture = nullptr;
+    sCaptureViewer = nullptr;
     mSceneRoot->removeChildren(0, mSceneRoot->getNumChildren());
 
-    savecfg(std::string());
+    // -set is a transient override for one run; writing it back would quietly
+    // make a diagnostic flag permanent. Explicit `savecfg` still works.
+    if(mCVarOverrides.empty())
+        savecfg(std::string());
+    else
+        Log::get().message("Skipping config save (-set overrides active)");
 
     return true;
 }

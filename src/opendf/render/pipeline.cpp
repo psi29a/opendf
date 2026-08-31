@@ -323,7 +323,36 @@ osg::Node* RenderPipeline::createDirectionalLight()
 
 void RenderPipeline::removeDirectionalLight(osg::Node *node)
 {
-    mLightPass->removeChild(node);
+    // The pipeline is torn down before the world that owns the lights (see
+    // Engine::deinitialize), so by now the pass may already be gone -- in
+    // which case it took the light node with it.
+    if(mLightPass.valid())
+        mLightPass->removeChild(node);
+}
+
+
+// ponytail: a point light is a full-screen quad, same as the directional one,
+// relying on the shader's radius test to discard fragments outside its volume.
+// Cost is one full-screen pass per light. If a dense block ever costs too much,
+// the upgrade is to draw a scissored light volume instead of a full quad.
+osg::Node* RenderPipeline::createPointLight(const osg::Vec3f &pos, float radius)
+{
+    osg::ref_ptr<osg::Geode> light = createScreenQuad(osg::Vec2f(0.0f, 0.0f), 1.0f, 1.0f,
+                                                      mTextureWidth, mTextureHeight);
+    osg::StateSet *ss = setShaderProgram(light, "shaders/point_light.vert", "shaders/point_light.frag");
+    ss->setAttributeAndModes(new osg::Depth(osg::Depth::ALWAYS, 0.0, 1.0, false),
+                             osg::StateAttribute::OFF);
+    ss->addUniform(new osg::Uniform("light_position", pos));
+    ss->addUniform(new osg::Uniform("light_radius", radius));
+
+    mLightPass->addChild(light.get());
+    return light.release();
+}
+
+void RenderPipeline::removePointLight(osg::Node *node)
+{
+    if(mLightPass.valid())
+        mLightPass->removeChild(node);
 }
 
 

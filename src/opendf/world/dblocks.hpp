@@ -37,6 +37,7 @@ struct ObjectBase {
 };
 struct ModelObject;
 struct FlatObject;
+struct LightObject;
 
 enum {
     Marker_EnterID = 0x6388,
@@ -62,6 +63,7 @@ struct DBlockHeader {
 
     Misc::SparseArray<std::unique_ptr<ModelObject>> mModels;
     Misc::SparseArray<std::unique_ptr<FlatObject>> mFlats;
+    Misc::SparseArray<std::unique_ptr<LightObject>> mLights;
 
     DBlockHeader();
     ~DBlockHeader();

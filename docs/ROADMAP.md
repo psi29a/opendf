@@ -205,6 +205,40 @@ commitments:
 * **Packaging.** Getting a build into people's hands on all three platforms
   without them having to compile it.
 
+## Curated tables carried over from Daggerfall Unity
+
+Some facts about the data simply aren't *in* the data, so Daggerfall Unity
+keeps hand-maintained lookup tables for them. Where we need the same
+behaviour we have to carry the same tables over; there is no deriving them.
+
+Ported so far:
+
+* **Emissive flats** (`MeshManager::loadFlat`, from DFU
+  `TextureReader.emissiveTextures`) -- fires, torches, braziers, glowing
+  creatures: the flats that light themselves rather than waiting to be lit.
+  185 archive/record pairs.
+
+  Worth recording *why* this is a list. Dungeon lights are separate RDB
+  objects, so "a light sits on this flat" looks like it should identify
+  emitters. Measured across all 1295 blocks, the correlation is strong but
+  wrong at the edges: archive 210 record 12 co-locates with a light 80% of
+  the time and is *not* emissive, record 24 never co-locates and *is*, and
+  roughly half the list is creatures and interior props with no RDB light to
+  correlate against at all. The heuristic also can't work where we need it,
+  since `loadFlat` sees a texture id and never a placement.
+
+Not ported, because nothing consumes them yet -- a table with no caller is
+just somewhere for errors to hide:
+
+* **`DungeonTextureTable`** (`{119, 120, 122, 123, 124, 168}`) -- the dungeon
+  wall texture set, needed once per-dungeon texture swapping lands. Closest
+  to being needed.
+* **Window textures** and the spectral/ghost eye special cases, both in
+  DFU's `TextureReader` -- needed when emissive gets subtler than
+  all-or-nothing, since only the glass or the eyes glow.
+* **Per-race NPC archives** (`MobilePersonBillboard`, 381-398 and 451-456) --
+  needed when townspeople exist.
+
 ## Non-goals
 
 * Shipping game assets. OpenDF requires an existing Daggerfall installation.
