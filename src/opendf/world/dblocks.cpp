@@ -295,7 +295,7 @@ void LightObject::load(std::istream &stream, const osg::Vec3 &basepos)
     // Apply the same flip here so the light lands on the geometry it lights.
     osg::Vec3 pos = basepos + osg::Vec3(mXPos, mYPos, mZPos);
     mNode = RenderPipeline::get().createPointLight(
-        osg::Vec3(pos.x(), -pos.y(), -pos.z()), mRadius * 3.0f
+        osg::Vec3(pos.x(), -pos.y(), -pos.z()), mRadius * 3.0f, true
     );
 }
 

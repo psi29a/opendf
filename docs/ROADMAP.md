@@ -205,6 +205,80 @@ commitments:
 * **Packaging.** Getting a build into people's hands on all three platforms
   without them having to compile it.
 
+## Lighting, measured against Daggerfall Unity
+
+Dungeon lighting is deliberately calibrated against DFU rather than eyeballed,
+so it is worth recording which numbers are theirs, which are ours, and what is
+still missing.
+
+Matching DFU exactly:
+
+* **Dungeon ambient** `(0.12, 0.12, 0.12)` -- `PlayerAmbientLight.DungeonAmbientLight`.
+* **Light range** `radius * 3` -- `RDBLayout.AddLight`.
+* **Player torch** (`World::setSunLight`) -- a white point light on the camera,
+  radius 240. DFU's `EnablePlayerTorch` uses range 6 Unity units, which is 240
+  Daggerfall units at `MeshReader.GlobalScale` (0.025). Without it the RDB
+  lights alone leave dungeons far darker than DFU's, even at identical ambient;
+  adding it roughly doubles the brightness of the floor near the player and
+  leaves the far tunnel alone.
+* **Light flicker** (`FlickerCallback` in `render/pipeline.cpp`) -- DFU animates
+  dungeon and city lights but not interior ones (`Animate` is set on the Dungeon
+  and City light prefabs, clear on Interior). It varies *radius*, never
+  intensity: 14 ticks a second, each cycle picking a random target in
+  `[base - Variance, base]` and creeping toward it at `Speed` per tick, so the
+  light only ever dips below its base and drifts back. We use the same numbers
+  converted to Daggerfall units. Only RDB lights flicker; the torch is steady,
+  matching DFU, whose torch gutters only when the light item is nearly spent.
+
+Ours, not DFU's:
+
+* **Falloff.** We use `(1 - d^2/r^2)^2`; DFU gets Unity's built-in point light
+  falloff, which is far more concentrated near the source. At half the radius
+  ours is roughly 4x brighter. Ours reads as broad soft pools, DFU's as tight
+  bright cores.
+* **Light intensity.** DFU's dungeon light prefab sets `m_Intensity: 0.8`; our
+  point lights have no intensity at all and inherit the light pass default of
+  1.0.
+
+  These two are compensating errors, both pointing brighter. Change one without
+  the other and the result moves further from DFU, not closer -- they get fixed
+  together or not at all.
+* **Exterior ambient** `(0.537, 0.549, 0.627)` is invented. DFU lerps
+  `ExteriorNightAmbientLight (0.25)` to `ExteriorNoonAmbientLight (0.9)` by
+  daylight scale. Ours is a fixed overcast-midday stand-in that cannot track
+  time of day, because there is no time of day yet.
+* **Ambient is a floor, not a base.** `dir_light.frag` computes
+  `max(ambient, diffuse * N.L)`, while Unity adds ambient to everything. Ours
+  has more contrast between lit and unlit surfaces.
+
+Missing:
+
+* **Castle and special-area ambient.** DFU switches to 0.58 -- nearly 5x the
+  dungeon value -- inside castle blocks and special areas, so Wayrest and the
+  main-story castles are far darker here than intended. `CastleBlock` is
+  derivable rather than curated (it comes from a billboard flat's
+  `resource.Magnitude != 0`, see `DaggerfallBillboard.cs`), but consuming it
+  needs per-block tracking of where the player is standing, which nothing else
+  needs yet.
+* **Interior (building) ambient.** DFU has `InteriorAmbientLight` and a night
+  variant; we only have sun-on and sun-off.
+* **User scaling.** DFU exposes `DungeonAmbientLightScale`,
+  `NightAmbientLightScale` and `PlayerTorchLightScale`. We have no cvars for
+  any of it.
+
+One engine bug surfaced by this work and left unfixed: `engine.cpp`'s main loop
+calls `viewer->frame(timediff)`, passing the per-frame *delta* where OSG expects
+an absolute simulation time. `osg::FrameStamp::getSimulationTime()` is therefore
+pinned near 0.015 for the life of the process, and anything driven by it --
+osgAnimation, particle systems, `osg::Sequence` -- would silently never advance.
+`FlickerCallback` sidesteps it by using `getReferenceTime()`. Fixing the main
+loop is a small change with a wide blast radius and deserves to be its own.
+
+Also worth noting: `createPointLight` builds a *fullscreen* quad per light, so
+every light shades every pixel and the shader's `discard` only saves work after
+three G-buffer fetches. Fine for Privateer's Hold, but it scales with lights x
+screen pixels, and a dense block will hurt.
+
 ## Curated tables carried over from Daggerfall Unity
 
 Some facts about the data simply aren't *in* the data, so Daggerfall Unity

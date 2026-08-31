@@ -42,22 +42,10 @@ macOS (Homebrew):
 
     brew install cmake ninja open-scene-graph sdl2-compat qt freetype
 
-Two caveats on macOS. Homebrew has no `mygui` formula, so MyGUI has to be
-built from source and pointed at with `MYGUI_HOME`; opendf supplies its own
-OSG-backed render manager, so the engine alone is enough:
-
-    git clone --depth 1 --branch MyGUI3.4.4 https://github.com/MyGUI/mygui.git
-    cmake -S mygui -B mygui/build -DCMAKE_INSTALL_PREFIX=$HOME/mygui-install \
-        -DMYGUI_DONT_USE_OBSOLETE=ON \
-        -DMYGUI_RENDERSYSTEM=1 -DMYGUI_BUILD_DEMOS=OFF -DMYGUI_BUILD_TOOLS=OFF \
-        -DMYGUI_BUILD_PLUGINS=OFF -DMYGUI_BUILD_DOCS=OFF
-    cmake --build mygui/build --target install
-    export MYGUI_HOME=$HOME/mygui-install
-
-`MYGUI_DONT_USE_OBSOLETE=ON` there is required, not tidiness: 3.4.4 defaults it
-to `FALSE` and installs no `MyGUI_Config.h`, so opendf's `AUTO` detection treats
-it as a pre-3.5 MyGUI and defines the macro. Building the library without it
-would leave the two disagreeing about every widget's layout.
+Two notes on macOS. Homebrew has no `mygui` formula, and none is needed:
+when MyGUI isn't found, the build fetches and builds MyGUI 3.4.4 in-tree
+automatically -- engine only, configured to match what opendf expects. See
+`OPENDF_FETCH_MYGUI` below to control that.
 
 And there is no `sdl2` formula any more: `sdl2-compat` replaces it, providing
 the same `sdl2.pc` and SDL2 headers on top of SDL3.
@@ -87,12 +75,18 @@ This produces the engine (`opendf`) and a BSA archive tool (`bsatool`) in
 
 Useful CMake options (defaults in parentheses):
 
-    -DBUILD_LAUNCHER=AUTO|ON|OFF build the Qt6 launcher (AUTO)
+    -DBUILD_LAUNCHER=AUTO|ON|OFF           build the Qt6 launcher (AUTO)
+    -DOPENDF_FETCH_MYGUI=AUTO|ON|OFF       build MyGUI in-tree (AUTO)
     -DMYGUI_DONT_USE_OBSOLETE=AUTO|ON|OFF  match how MyGUI was built (AUTO)
 
 `BUILD_LAUNCHER=AUTO` builds the launcher if Qt6 6.2+ is installed and skips it
 otherwise, so an engine-only build needs no Qt6. Pass `ON` to require it (the
 build then fails if Qt6 is missing) or `OFF` to never build it.
+
+`OPENDF_FETCH_MYGUI=AUTO` uses a system MyGUI when `find_package` locates one
+and otherwise fetches and builds MyGUI 3.4.4 in-tree, which is what happens on
+macOS. `ON` always builds in-tree without looking for a system one; `OFF`
+requires a system MyGUI and fails if it is absent.
 
 `MYGUI_DONT_USE_OBSOLETE` has to agree with the `MYGUI_DONT_USE_OBSOLETE` the
 MyGUI you link against was built with -- it changes the layout of every widget,

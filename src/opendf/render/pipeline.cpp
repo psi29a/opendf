@@ -16,6 +16,9 @@
 
 #include <osgDB/ReadFile>
 
+#include <algorithm>
+#include <cstdlib>
+
 #include "renderer.hpp"
 
 
@@ -335,7 +338,75 @@ void RenderPipeline::removeDirectionalLight(osg::Node *node)
 // relying on the shader's radius test to discard fragments outside its volume.
 // Cost is one full-screen pass per light. If a dense block ever costs too much,
 // the upgrade is to draw a scissored light volume instead of a full quad.
-osg::Node* RenderPipeline::createPointLight(const osg::Vec3f &pos, float radius)
+namespace {
+
+// Daggerfall Unity animates its dungeon and city lights (but not interior
+// ones) by shrinking the light's radius and letting it drift back, never
+// growing past the base value -- see DaggerfallLight.AnimateLight(). It ticks
+// 14 times a second; each cycle picks a random target in
+// [base - Variance, base] and creeps toward it by Speed per tick.
+//
+// DFU's Variance and Speed are in Unity units, so they scale into Daggerfall
+// units by 1/MeshReader.GlobalScale (0.025). The ratio between them is what
+// sets the rhythm, and it survives the conversion unchanged.
+class FlickerCallback : public osg::UniformCallback
+{
+    static const constexpr float sVariance = 1.0f / 0.025f;  // 40: deepest dip
+    static const constexpr float sSpeed    = 0.4f / 0.025f;  // 16: units per tick
+    static const constexpr double sTickRate = 1.0 / 14.0;
+
+    const float mBase;
+    float mCurrent;
+    float mTarget;
+    bool mStepping = false;
+    double mNextTick = 0.0;
+
+public:
+    FlickerCallback(float base) : mBase(base), mCurrent(base), mTarget(base) { }
+
+    void operator()(osg::Uniform *uniform, osg::NodeVisitor *nv) override
+    {
+        const osg::FrameStamp *fs = nv->getFrameStamp();
+        if(!fs) return;
+
+        // Reference time, not simulation time: engine.cpp's main loop passes
+        // the per-frame delta to viewer->frame(), which OSG takes as an
+        // absolute simulation time, so getSimulationTime() is pinned near
+        // 0.015 forever. Reference time is the viewer's own wall clock and
+        // advances regardless.
+        // ponytail: works around that rather than fixing it -- correcting the
+        // main loop is a separate change with its own blast radius.
+        const double now = fs->getReferenceTime();
+        if(now < mNextTick) return;
+        mNextTick = now + sTickRate;
+
+        if(!mStepping)
+        {
+            // A dim light can have a base smaller than the variance, so clamp:
+            // a negative radius would make the falloff discard everywhere and
+            // switch the light off outright.
+            const float dip = sVariance * (float)std::rand() / (float)RAND_MAX;
+            mTarget = std::max(mBase - dip, 0.0f);
+            mStepping = true;
+        }
+        else if(mTarget <= mCurrent)
+        {
+            mCurrent -= sSpeed;
+            if(mCurrent <= mTarget) { mCurrent = mTarget; mStepping = false; }
+        }
+        else
+        {
+            mCurrent += sSpeed;
+            if(mCurrent >= mTarget) { mCurrent = mTarget; mStepping = false; }
+        }
+
+        uniform->set(mCurrent);
+    }
+};
+
+} // namespace
+
+osg::Node* RenderPipeline::createPointLight(const osg::Vec3f &pos, float radius, bool animate)
 {
     osg::ref_ptr<osg::Geode> light = createScreenQuad(osg::Vec2f(0.0f, 0.0f), 1.0f, 1.0f,
                                                       mTextureWidth, mTextureHeight);
@@ -343,7 +414,11 @@ osg::Node* RenderPipeline::createPointLight(const osg::Vec3f &pos, float radius)
     ss->setAttributeAndModes(new osg::Depth(osg::Depth::ALWAYS, 0.0, 1.0, false),
                              osg::StateAttribute::OFF);
     ss->addUniform(new osg::Uniform("light_position", pos));
-    ss->addUniform(new osg::Uniform("light_radius", radius));
+
+    osg::ref_ptr<osg::Uniform> radiusUniform = new osg::Uniform("light_radius", radius);
+    if(animate)
+        radiusUniform->setUpdateCallback(new FlickerCallback(radius));
+    ss->addUniform(radiusUniform.get());
 
     mLightPass->addChild(light.get());
     return light.release();

@@ -80,7 +80,9 @@ public:
     osg::Node *createDirectionalLight();
     void removeDirectionalLight(osg::Node *node);
 
-    osg::Node *createPointLight(const osg::Vec3f &pos, float radius);
+    // animate: flicker the radius the way Daggerfall Unity animates its
+    // dungeon and city lights. Off for steady sources like the player torch.
+    osg::Node *createPointLight(const osg::Vec3f &pos, float radius, bool animate=false);
     void removePointLight(osg::Node *node);
 
     void toggleDebugMapDisplay();
