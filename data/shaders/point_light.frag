@@ -31,6 +31,13 @@ void main()
     // The obvious (1 - d^2/r^2)^2 is a much flatter curve: about 5x brighter
     // at half the radius, which reads as broad soft pools instead of the
     // tight bright cores classic-style lighting wants.
+    // A radius of zero is legal in the RDB data, and would make t2 either inf
+    // or -- together with dist 0 -- NaN. NaN survives the clamp and the
+    // atten <= 0.0 test, and this pass blends GL_ONE/GL_ONE, so it would
+    // poison the light buffer rather than just dropping one fragment.
+    if(light_radius <= 0.0)
+        discard;
+
     float t2 = (dist*dist) / (light_radius*light_radius);
     float atten = clamp((1.0/(1.0 + 25.0*t2) - 1.0/26.0) * (26.0/25.0), 0.0, 1.0);
     if(atten <= 0.0)

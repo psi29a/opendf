@@ -557,7 +557,11 @@ void World::applyLightSettings()
     // but 0.58 inside a castle block -- Daggerfall scales ambient up a long way
     // in the main-story castles, and without this Wayrest is nearly five times
     // too dark.
-    osg::Vec4f ambient = enable ? osg::Vec4f(0.537f, 0.549f, 0.627f, 1.0f)
+    // Exterior ambient is the old eyeball-tuned value converted to linear
+    // (c^2.2), so it looks as it did before lighting moved to linear space
+    // rather than being washed out by the encode. Still ours, not DFU's, and
+    // still fixed until there is a time of day to interpolate over.
+    osg::Vec4f ambient = enable ? osg::Vec4f(0.255f, 0.267f, 0.358f, 1.0f)
                     : (mInCastleBlock ? osg::Vec4f(0.580f, 0.580f, 0.580f, 1.0f)
                                       : osg::Vec4f(0.120f, 0.120f, 0.120f, 1.0f));
     ambient = osg::Vec4f(ambient.r()*ambientScale, ambient.g()*ambientScale,
@@ -672,14 +676,19 @@ void World::loadDungeonByExterior(int regnum, int extid)
         mCurrentDungeon = &dinfo;
         mCurrentSelection = InvalidHandle;
 
+        // Cleared *before* setSunLight, which applies ambient using them: a
+        // stale castle flag from the dungeon we just left would otherwise pick
+        // the 0.58 ambient, and updateCurrentBlock() only re-applies on a
+        // change, so a non-castle start block would leave it stuck there.
+        mCurrentBlock = -1;
+        mInCastleBlock = false;
+
         setSunLight(false);
 
         uint8_t climate = getClimateValue(extloc.mX/256, extloc.mY/256);
         Log::get().stream()<< "Climate "<<(int)climate;
 
         Log::get().stream()<< "Entering "<<dinfo.mLocationName;
-        mCurrentBlock = -1;
-        mInCastleBlock = false;
         mDungeon.reserve(dinfo.mBlocks.size());
         for(const DungeonBlock &block : dinfo.mBlocks)
         {

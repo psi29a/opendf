@@ -116,9 +116,17 @@ void makeDirRecurse(std::string path)
     }
     // mkdir -p semantics: a directory that already exists is success. Without
     // this the helper throws the first time it is pointed at an existing
-    // config dir.
+    // config dir. A *file* in the way is still a failure -- treating it as
+    // success would just move the error to the log or config write, where it
+    // is far harder to place.
     if(err != 0 && errno == EEXIST)
-        err = 0;
+    {
+        struct stat st{};
+        if(stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode))
+            err = 0;
+        else
+            errno = ENOTDIR;
+    }
     if(err != 0)
     {
         std::stringstream sstr;

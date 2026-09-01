@@ -217,9 +217,10 @@ that -- multiplying gamma-encoded palette colours by linear light and writing
 the result straight out, which crushes midtones badly. Every DFU constant
 looked wrong here as a result, and the old `(1 - d^2/r^2)^2` falloff only
 looked acceptable because its excessive brightness cancelled the missing
-gamma. `object/sprite/terrain.frag` now decode albedo with `pow(c, 2.2)` into
-the RGBA16F G-buffer and `combiner.frag` encodes the lit result back; with
-that in place DFU's own numbers produce a sensible image.
+gamma. `data/shaders/object.frag`, `data/shaders/sprite.frag` and
+`data/shaders/terrain.frag` now decode albedo with `pow(c, 2.2)` into the
+RGBA16F G-buffer, and `data/shaders/combiner.frag` encodes the lit result
+back; with that in place DFU's own numbers produce a sensible image.
 
 Matching DFU:
 
@@ -231,9 +232,13 @@ Matching DFU:
 * **Light range** `radius * 3` -- `RDBLayout.AddLight`.
 * **Light intensity** 0.8 -- the `m_Intensity` on DFU's dungeon light prefab,
   applied through `r_lightintensity`.
-* **Falloff** `1/(1 + 25*(d/r)^2)`, Unity's built-in point light shape,
-  rescaled to reach exactly zero at the radius so a light neither leaks past
-  its volume nor pops when it ends.
+* **Falloff**, Unity's built-in point light shape. `1/(1 + 25*(d/r)^2)` is
+  `1/26` at `d == r`, not zero, so it is rescaled to
+  `(1/(1 + 25*(d/r)^2) - 1/26) * 26/25` -- exactly 1 at the source and exactly
+  0 at the radius, so a light neither leaks past the volume it claims nor pops
+  when it ends. A radius of zero is rejected before the division; the RDB
+  permits one, and it would otherwise put a NaN into an additively blended
+  light buffer.
 * **Player torch** -- a white point light on the camera, radius 240. DFU's
   `EnablePlayerTorch` uses range 6 Unity units, which is 240 Daggerfall units
   at `MeshReader.GlobalScale` (0.025).
@@ -246,11 +251,13 @@ Matching DFU:
 
 Ours, not DFU's:
 
-* **Exterior ambient** `(0.537, 0.549, 0.627)` is invented, and was tuned by
-  eye *before* the gamma fix, so it is now certainly too bright. DFU lerps
+* **Exterior ambient** `(0.255, 0.267, 0.358)` is invented. It is the older
+  eyeball-tuned `(0.537, 0.549, 0.627)` converted to linear (`c^2.2`) when
+  lighting moved to linear space, so it looks as it did before rather than
+  being washed out by the encode. DFU instead lerps
   `ExteriorNightAmbientLight (0.25)` to `ExteriorNoonAmbientLight (0.9)` by
-  daylight scale; ours is a fixed stand-in that cannot track time of day
-  because there is no time of day yet. Worth retuning once there is.
+  daylight scale; ours is fixed and cannot track time of day because there is
+  no time of day yet.
 * **Ambient is a floor, not a base.** `dir_light.frag` computes
   `max(ambient, diffuse * N.L)` where Unity adds ambient to everything, so ours
   has more contrast between lit and unlit surfaces.
