@@ -44,6 +44,12 @@
 #include <direct.h>
 #define mkdir(x,y) _mkdir(x)
 #define S_IRWXU 0
+// MSVC's <sys/stat.h> has _S_IFMT/_S_IFDIR but not the POSIX S_ISDIR test.
+// Masking with _S_IFMT first is the POSIX definition; a plain & _S_IFDIR would
+// also report true for any other type sharing that bit.
+#ifndef S_ISDIR
+#define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
+#endif
 #endif
 
 
