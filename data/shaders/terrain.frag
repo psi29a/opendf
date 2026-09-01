@@ -12,11 +12,12 @@ varying vec3 n_viewspace;
 varying vec3 t_viewspace;
 varying vec3 b_viewspace;
 varying vec4 TexCoords;
-flat varying uint TexIndex;
+// See terrain.vert: a uint varying does not compile on macOS.
+flat varying float TexIndex;
 
 void main()
 {
-    vec3 coord = vec3(TexCoords.xy, float(TexIndex));
+    vec3 coord = vec3(TexCoords.xy, TexIndex);
     vec4 color = vec4(texture2DArray(diffuseTex, coord).rgb, 0.0);
     vec4 nn = vec4(0.5, 0.5, 1.0, 1.0);
 
