@@ -13,8 +13,13 @@
 #include <osg/Program>
 #include <osg/Shader>
 #include <osg/Uniform>
+#include <osg/Polytope>
+#include <osg/NodeCallback>
 
 #include <osgDB/ReadFile>
+
+#include <algorithm>
+#include <cstdlib>
 
 #include "renderer.hpp"
 
@@ -323,7 +328,145 @@ osg::Node* RenderPipeline::createDirectionalLight()
 
 void RenderPipeline::removeDirectionalLight(osg::Node *node)
 {
-    mLightPass->removeChild(node);
+    // The pipeline is torn down before the world that owns the lights (see
+    // Engine::deinitialize), so by now the pass may already be gone -- in
+    // which case it took the light node with it.
+    if(mLightPass.valid())
+        mLightPass->removeChild(node);
+}
+
+
+// ponytail: a point light is a full-screen quad, same as the directional one,
+// relying on the shader's radius test to discard fragments outside its volume.
+// Cost is one full-screen pass per light. If a dense block ever costs too much,
+// the upgrade is to draw a scissored light volume instead of a full quad.
+namespace {
+
+// Daggerfall Unity animates its dungeon and city lights (but not interior
+// ones) by shrinking the light's radius and letting it drift back, never
+// growing past the base value -- see DaggerfallLight.AnimateLight(). It ticks
+// 14 times a second; each cycle picks a random target in
+// [base - Variance, base] and creeps toward it by Speed per tick.
+//
+// DFU's Variance and Speed are in Unity units, so they scale into Daggerfall
+// units by 1/MeshReader.GlobalScale (0.025). The ratio between them is what
+// sets the rhythm, and it survives the conversion unchanged.
+class FlickerCallback : public osg::UniformCallback
+{
+    static const constexpr float sVariance = 1.0f / 0.025f;  // 40: deepest dip
+    static const constexpr float sSpeed    = 0.4f / 0.025f;  // 16: units per tick
+    static const constexpr double sTickRate = 1.0 / 14.0;
+
+    const float mBase;
+    float mCurrent;
+    float mTarget;
+    bool mStepping = false;
+    double mNextTick = 0.0;
+
+public:
+    FlickerCallback(float base) : mBase(base), mCurrent(base), mTarget(base) { }
+
+    void operator()(osg::Uniform *uniform, osg::NodeVisitor *nv) override
+    {
+        const osg::FrameStamp *fs = nv->getFrameStamp();
+        if(!fs) return;
+
+        const double now = fs->getSimulationTime();
+        if(now < mNextTick) return;
+        mNextTick = now + sTickRate;
+
+        if(!mStepping)
+        {
+            // A dim light can have a base smaller than the variance, so clamp:
+            // a negative radius would make the falloff discard everywhere and
+            // switch the light off outright.
+            const float dip = sVariance * (float)std::rand() / (float)RAND_MAX;
+            mTarget = std::max(mBase - dip, 0.0f);
+            mStepping = true;
+        }
+        else if(mTarget <= mCurrent)
+        {
+            mCurrent -= sSpeed;
+            if(mCurrent <= mTarget) { mCurrent = mTarget; mStepping = false; }
+        }
+        else
+        {
+            mCurrent += sSpeed;
+            if(mCurrent >= mTarget) { mCurrent = mTarget; mStepping = false; }
+        }
+
+        uniform->set(mCurrent);
+    }
+};
+
+// Each light is a fullscreen quad, so an off-screen light still costs a full
+// screen of fragments (the shader's discard only saves work after three
+// G-buffer fetches). The light pass runs under an ortho projection with
+// NO_CULLING, so OSG cannot cull these for us -- test the light's sphere of
+// influence against the *main* camera's frustum instead and skip the quad
+// entirely when it cannot affect anything visible. Daggerfall Unity does the
+// equivalent in DungeonLightHandler by disabling out-of-range lights.
+class LightCullCallback : public osg::NodeCallback
+{
+    const float mRadius;
+    osg::observer_ptr<osg::Camera> mMainPass;
+
+public:
+    LightCullCallback(float radius, osg::Camera *mainPass)
+      : mRadius(radius), mMainPass(mainPass) { }
+
+    void operator()(osg::Node *node, osg::NodeVisitor *nv) override
+    {
+        osg::ref_ptr<osg::Camera> main;
+        osg::StateSet *ss = node->getStateSet();
+        osg::Uniform *posUniform = ss ? ss->getUniform("light_position") : nullptr;
+        if(!mMainPass.lock(main) || !posUniform)
+        {
+            traverse(node, nv);
+            return;
+        }
+
+        // Read the position back rather than caching it, so a light that moves
+        // -- the player torch does, every frame -- is tested where it actually
+        // is. The radius is the base one, which flicker only ever dips below,
+        // so the sphere stays conservative.
+        osg::Vec3f pos;
+        posUniform->get(pos);
+
+        osg::Polytope frustum;
+        frustum.setToUnitFrustum();
+        frustum.transformProvidingInverse(main->getViewMatrix() * main->getProjectionMatrix());
+        if(frustum.contains(osg::BoundingSphere(pos, mRadius)))
+            traverse(node, nv);
+    }
+};
+
+} // namespace
+
+osg::Node* RenderPipeline::createPointLight(const osg::Vec3f &pos, float radius, bool animate)
+{
+    osg::ref_ptr<osg::Geode> light = createScreenQuad(osg::Vec2f(0.0f, 0.0f), 1.0f, 1.0f,
+                                                      mTextureWidth, mTextureHeight);
+    osg::StateSet *ss = setShaderProgram(light, "shaders/point_light.vert", "shaders/point_light.frag");
+    ss->setAttributeAndModes(new osg::Depth(osg::Depth::ALWAYS, 0.0, 1.0, false),
+                             osg::StateAttribute::OFF);
+    ss->addUniform(new osg::Uniform("light_position", pos));
+
+    osg::ref_ptr<osg::Uniform> radiusUniform = new osg::Uniform("light_radius", radius);
+    if(animate)
+        radiusUniform->setUpdateCallback(new FlickerCallback(radius));
+    ss->addUniform(radiusUniform.get());
+
+    light->setCullCallback(new LightCullCallback(radius, mMainPass.get()));
+
+    mLightPass->addChild(light.get());
+    return light.release();
+}
+
+void RenderPipeline::removePointLight(osg::Node *node)
+{
+    if(mLightPass.valid())
+        mLightPass->removeChild(node);
 }
 
 

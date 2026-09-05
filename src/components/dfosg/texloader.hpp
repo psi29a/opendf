@@ -41,6 +41,10 @@ class TexLoader {
                                        std::istream &stream);
     void loadUncompressedMulti(osg::Image *image, const Resource::Palette &palette,
                                std::istream &stream);
+    void loadRleFrame(osg::Image *image, const Resource::Palette &palette,
+                      std::istream &stream, uint32_t entryOffset,
+                      uint32_t dataOffset, size_t width, size_t height,
+                      size_t frame);
 
     ImagePtrArray load(std::istream &stream, const TexEntryHeader &texentry,
                        int16_t *xoffset, int16_t *yoffset, int16_t *xscale, int16_t *yscale,

@@ -256,8 +256,11 @@ configure_file("${opendf_SOURCE_DIR}/settings.cfg.in"
                "${opendf_BINARY_DIR}/settings.cfg")
 
 add_executable(opendf ${SRCS} ${HDRS})
-set_property(TARGET opendf APPEND PROPERTY INCLUDE_DIRECTORIES
-    "${opendf_SOURCE_DIR}/src/opendf"
+target_include_directories(opendf PRIVATE "${opendf_SOURCE_DIR}/src/opendf")
+# SYSTEM silences warnings from these headers. OSG 3.6 predates the warnings
+# modern Clang emits for it (-Wdeprecated-copy-with-user-provided-copy,
+# -Woverloaded-virtual), and hundreds of them per TU bury our own.
+target_include_directories(opendf SYSTEM PRIVATE
     ${OPENSCENEGRAPH_INCLUDE_DIRS}
     ${SDL2_INCLUDE_DIR}
     ${OPENGL_INCLUDE_DIR}

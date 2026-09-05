@@ -9,7 +9,12 @@ varying vec3 n_viewspace;
 varying vec3 t_viewspace;
 varying vec3 b_viewspace;
 varying vec4 TexCoords;
-flat varying uint TexIndex;
+// A float rather than a uint: Apple's GLSL 1.20 compiler rejects a uint
+// varying outright ("syntax error"), even though it advertises
+// GL_EXT_gpu_shader4 and accepts usampler2D, texelFetch2D and
+// gl_InstanceIDARB from the same extension. Still flat, so the index is not
+// interpolated; a float carries tile indices exactly either way.
+flat varying float TexIndex;
 
 void main()
 {
@@ -19,7 +24,7 @@ void main()
 
     gl_Position = gl_ModelViewProjectionMatrix * pos;
     TexCoords = gl_MultiTexCoord0;
-    TexIndex = texelFetch2D(tilemapTex, ivec2(x, y), 0).r;
+    TexIndex = float(texelFetch2D(tilemapTex, ivec2(x, y), 0).r);
 
     pos_viewspace = (gl_ModelViewMatrix * pos).xyz;
 

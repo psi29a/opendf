@@ -11,6 +11,7 @@
 #include <osg/Referenced>
 #include <osg/ref_ptr>
 #include <osg/Vec3>
+#include <osg/Node>
 
 #include "itembase.hpp"
 #include "pitems.hpp"
@@ -75,7 +76,28 @@ class World : public WorldIface {
     osg::Vec3f mCameraPos;
     osg::Vec3f mCameraRot;
 
+    // The outdoor sun. Dungeons don't get one -- their only light is the
+    // point lights the RDB places -- so it's created and dropped per location.
+    osg::ref_ptr<osg::Node> mSunLight;
+
+    // The player's torch: a point light that rides the camera underground.
+    // Daggerfall Unity carries one too, which is why its dungeons stay
+    // navigable at the same 0.12 ambient we use.
+    osg::ref_ptr<osg::Node> mTorchLight;
+
     bool mFirstStart;
+
+    // Whether the last setSunLight() put us above ground; applyLightSettings()
+    // needs it to know which ambient to scale.
+    bool mSunEnabled = false;
+
+    // Which dungeon block the camera is standing in, and whether it is a
+    // castle block. Tracked so ambient can change as you walk into one.
+    int mCurrentBlock = -1;
+    bool mInCastleBlock = false;
+
+    void setSunLight(bool enable);
+    void updateCurrentBlock();
 
     World();
     ~World();
@@ -108,6 +130,8 @@ public:
 
     virtual void dumpArea() const final;
     virtual void dumpBlocks() const final;
+
+    virtual void applyLightSettings() final;
 
     size_t castCameraToViewportRay(const float vpX, const float vpY, float maxDistance, bool ignoreFlats);
 };

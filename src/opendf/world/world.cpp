@@ -12,6 +12,8 @@
 
 #include <osgViewer/Viewer>
 #include <osg/Light>
+#include <osg/Uniform>
+#include <osg/StateSet>
 #include <osg/Quat>
 
 #include "components/vfs/manager.hpp"
@@ -234,6 +236,19 @@ CCMD(dwarp)
 
 CVAR(CVarBool, g_introspect, false);
 
+// Lighting tuning knobs. These are percentages because the cvar system has no
+// float type; Daggerfall Unity exposes the same first two as 0..1 floats
+// (DungeonAmbientLightScale, PlayerTorchLightScale) and hardcodes the third as
+// m_Intensity on its dungeon light prefab.
+CVAR(CVarInt, r_ambientscale,   100, 0, 400);   // scales whichever ambient is active
+CVAR(CVarInt, r_torchscale,     100, 0, 400);   // the player torch
+CVAR(CVarInt, r_lightintensity,  80, 0, 400);   // RDB point lights; DFU uses 0.8
+
+CCMD(relight)
+{
+    WorldIface::get().applyLightSettings();
+}
+
 
 World World::sWorld;
 WorldIface &WorldIface::sInstance = World::sWorld;
@@ -361,6 +376,13 @@ void World::deinitialize()
 {
     mExterior.clear();
     mDungeon.clear();
+    mSunLight = nullptr;
+    // The torch belongs to the pipeline's light pass, which deinitialize()
+    // drops. Holding a stale pointer would make the next setSunLight() skip
+    // creating a replacement and leave update() moving a detached node.
+    mTorchLight = nullptr;
+    mCurrentBlock = -1;
+    mInCastleBlock = false;
     Renderer::get().setObjectRoot(nullptr);
     mViewer = nullptr;
 }
@@ -454,6 +476,123 @@ bool World::getExteriorByName(const std::string &name, size_t &regnum, size_t &m
     return false;
 }
 
+// The "global light" quad is always present: dir_light.frag computes
+// max(ambient, diffuse*N.L), so with a black diffuse it contributes just the
+// flat ambient term -- and it is the only thing that consumes ambient_color.
+// Outdoors that quad is a real sun over a bright sky ambient; underground the
+// sun goes black and the ambient drops to a dungeon level, leaving the RDB's
+// point lights to do the actual lighting.
+void World::setSunLight(bool enable)
+{
+    RenderPipeline &pipeline = RenderPipeline::get();
+
+    if(!mSunLight.valid())
+    {
+        osg::Vec3f lightDir(70.f, -100.f, 10.f);
+        lightDir.normalize();
+        mSunLight = pipeline.createDirectionalLight();
+        mSunLight->getOrCreateStateSet()->addUniform(
+            new osg::Uniform("light_direction", lightDir));
+    }
+
+    mSunEnabled = enable;
+    applyLightSettings();
+}
+
+// Which dungeon block the camera is in. Only the castle flag is consumed so
+// far, and only on a change, so this costs a short scan on the frames where
+// you cross a block boundary and nothing on the rest.
+void World::updateCurrentBlock()
+{
+    if(mDungeon.empty())
+    {
+        if(mCurrentBlock != -1) { mCurrentBlock = -1; mInCastleBlock = false; }
+        return;
+    }
+
+    // Undo the negate-and-flip that built mCameraPos, to get back to the
+    // object space the blocks were placed in.
+    const osg::Vec3f p(-mCameraPos.x(), mCameraPos.y(), mCameraPos.z());
+
+    if(mCurrentBlock >= 0 && mCurrentBlock < (int)mDungeon.size()
+       && mDungeon[mCurrentBlock]->contains(p))
+        return;
+
+    for(size_t i = 0;i < mDungeon.size();++i)
+    {
+        if(!mDungeon[i]->contains(p))
+            continue;
+        mCurrentBlock = (int)i;
+        if(mInCastleBlock != mDungeon[i]->mCastleBlock)
+        {
+            mInCastleBlock = mDungeon[i]->mCastleBlock;
+            applyLightSettings();
+        }
+        return;
+    }
+}
+
+// Everything the lighting cvars touch, in one place so the `relight` console
+// command can re-apply them without reloading the world.
+void World::applyLightSettings()
+{
+    RenderPipeline &pipeline = RenderPipeline::get();
+    const bool enable = mSunEnabled;
+
+    const float ambientScale = *r_ambientscale / 100.0f;
+    const float torchScale   = *r_torchscale / 100.0f;
+    const float intensity    = *r_lightintensity / 100.0f;
+
+    if(mSunLight.valid())
+    {
+        osg::StateSet *ss = mSunLight->getOrCreateStateSet();
+        osg::Vec4f sun = enable ? osg::Vec4f(1.0f, 0.988f, 0.933f, 1.0f)
+                                : osg::Vec4f(0.0f, 0.0f, 0.0f, 1.0f);
+        ss->getOrCreateUniform("diffuse_color", osg::Uniform::FLOAT_VEC4)->set(sun);
+        ss->getOrCreateUniform("specular_color", osg::Uniform::FLOAT_VEC4)->set(
+            enable ? osg::Vec4f(1.0f, 1.0f, 1.0f, 1.0f) : osg::Vec4f(0.0f, 0.0f, 0.0f, 1.0f));
+    }
+
+    // Ambient matches Daggerfall Unity's PlayerAmbientLight: 0.12 underground,
+    // but 0.58 inside a castle block -- Daggerfall scales ambient up a long way
+    // in the main-story castles, and without this Wayrest is nearly five times
+    // too dark.
+    // Exterior ambient is the old eyeball-tuned value converted to linear
+    // (c^2.2), so it looks as it did before lighting moved to linear space
+    // rather than being washed out by the encode. Still ours, not DFU's, and
+    // still fixed until there is a time of day to interpolate over.
+    osg::Vec4f ambient = enable ? osg::Vec4f(0.255f, 0.267f, 0.358f, 1.0f)
+                    : (mInCastleBlock ? osg::Vec4f(0.580f, 0.580f, 0.580f, 1.0f)
+                                      : osg::Vec4f(0.120f, 0.120f, 0.120f, 1.0f));
+    ambient = osg::Vec4f(ambient.r()*ambientScale, ambient.g()*ambientScale,
+                         ambient.b()*ambientScale, 1.0f);
+    pipeline.getLightingStateSet()->getUniform("ambient_color")->set(ambient);
+
+    // RDB point lights set no colour of their own, so they inherit this one
+    // from the light pass -- which makes it the single place to scale them all.
+    // DFU's dungeon light prefab uses m_Intensity 0.8.
+    osg::StateSet *lss = pipeline.getLightingStateSet();
+    lss->getUniform("diffuse_color")->set(osg::Vec4f(intensity, intensity, intensity, 1.0f));
+    lss->getUniform("specular_color")->set(osg::Vec4f(intensity, intensity, intensity, 1.0f));
+
+    // Player torch, matching Daggerfall Unity's EnablePlayerTorch: a white
+    // point light on the player, intensity 1.0, range 6 Unity units -- which
+    // is 240 Daggerfall units at MeshReader.GlobalScale (0.025). Without it
+    // the RDB lights alone leave dungeons far darker than DFU's, even though
+    // our ambient constant matches theirs exactly.
+    // ponytail: always on underground. DFU gates it on a held light source
+    // and dims it as the item burns down; that needs an inventory we don't
+    // have yet, and a torch you can't lose beats a dungeon you can't see.
+    if(!mTorchLight.valid())
+        mTorchLight = pipeline.createPointLight(-mCameraPos, 240.0f);
+    osg::StateSet *tss = mTorchLight->getOrCreateStateSet();
+    osg::Vec4f torch = enable ? osg::Vec4f(0.0f, 0.0f, 0.0f, 1.0f)
+                              : osg::Vec4f(torchScale, torchScale, torchScale, 1.0f);
+    tss->getOrCreateUniform("diffuse_color", osg::Uniform::FLOAT_VEC4)->set(torch);
+    tss->getOrCreateUniform("specular_color", osg::Uniform::FLOAT_VEC4)->set(torch);
+}
+
+
 void World::loadExterior(int regnum, int extid)
 {
     const MapRegion &region = mRegions.at(regnum);
@@ -465,6 +604,8 @@ void World::loadExterior(int regnum, int extid)
     mCurrentExterior = &extloc;
     mCurrentDungeon = nullptr;
     mCurrentSelection = InvalidHandle;
+
+    setSunLight(true);
 
     uint8_t climate = getClimateValue(extloc.mX/256, extloc.mY/256);
     Log::get().stream()<< "Climate "<<(int)climate;
@@ -534,6 +675,15 @@ void World::loadDungeonByExterior(int regnum, int extid)
         mCurrentExterior = &extloc;
         mCurrentDungeon = &dinfo;
         mCurrentSelection = InvalidHandle;
+
+        // Cleared *before* setSunLight, which applies ambient using them: a
+        // stale castle flag from the dungeon we just left would otherwise pick
+        // the 0.58 ambient, and updateCurrentBlock() only re-applies on a
+        // change, so a non-castle start block would leave it stuck there.
+        mCurrentBlock = -1;
+        mInCastleBlock = false;
+
+        setSunLight(false);
 
         uint8_t climate = getClimateValue(extloc.mX/256, extloc.mY/256);
         Log::get().stream()<< "Climate "<<(int)climate;
@@ -636,6 +786,13 @@ void World::update(float timediff)
     ));
     matf.preMultTranslate(mCameraPos);
     mViewer->getCamera()->setViewMatrix(matf);
+
+    // mCameraPos is the negated eye position, flipped in y/z the same way
+    // LightObject::load flips an RDB light, so the torch sits at -mCameraPos.
+    if(mTorchLight.valid())
+        mTorchLight->getStateSet()->getUniform("light_position")->set(-mCameraPos);
+
+    updateCurrentBlock();
 
     if(guimode == GuiIface::Mode_Game)
         mCurrentSelection = castCameraToViewportRay(0.5f, 0.5f, 1024.0f, false);

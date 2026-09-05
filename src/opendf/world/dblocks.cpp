@@ -15,6 +15,7 @@
 #include "components/resource/meshmanager.hpp"
 
 #include "render/renderer.hpp"
+#include "render/pipeline.hpp"
 #include "class/animated.hpp"
 #include "class/placeable.hpp"
 #include "class/activator.hpp"
@@ -114,6 +115,22 @@ struct FlatObject : public ObjectBase {
                       // those with associated actions.
 
     FlatObject(size_t id, int x, int y, int z) : ObjectBase(id, ObjectType_Flat, x, y, z) { }
+
+    void load(std::istream &stream, const osg::Vec3 &basepos);
+
+    virtual void print(std::ostream &stream) const final;
+};
+
+struct LightObject : public ObjectBase {
+    uint32_t mUnknown1;
+    uint32_t mUnknown2;
+    uint16_t mRadius;
+
+    // The light pass owns this node; we only keep it to remove it again.
+    osg::ref_ptr<osg::Node> mNode;
+
+    LightObject(size_t id, int x, int y, int z) : ObjectBase(id, ObjectType_Light, x, y, z) { }
+    virtual ~LightObject();
 
     void load(std::istream &stream, const osg::Vec3 &basepos);
 
@@ -259,6 +276,39 @@ void FlatObject::load(std::istream &stream, const osg::Vec3 &basepos)
     Placeable::get().setPoint(mId, pos);
 }
 
+LightObject::~LightObject()
+{
+    if(mNode.valid())
+        RenderPipeline::get().removePointLight(mNode.get());
+}
+
+void LightObject::load(std::istream &stream, const osg::Vec3 &basepos)
+{
+    mUnknown1 = VFS::read_le32(stream);
+    mUnknown2 = VFS::read_le32(stream);
+    mRadius = VFS::read_le16(stream);
+
+    // Daggerfall Unity uses radius*3 as the light's effective range (see
+    // RDBLayout.AddLight); the stored radius alone barely leaves the fixture.
+    // The light pass draws outside mSceneRoot, whose 180-degree X rotation
+    // (see Engine::initialize) every piece of world geometry goes through.
+    // Apply the same flip here so the light lands on the geometry it lights.
+    osg::Vec3 pos = basepos + osg::Vec3(mXPos, mYPos, mZPos);
+    mNode = RenderPipeline::get().createPointLight(
+        osg::Vec3(pos.x(), -pos.y(), -pos.z()), mRadius * 3.0f, true
+    );
+}
+
+void LightObject::print(std::ostream &stream) const
+{
+    DF::ObjectBase::print(stream);
+
+    stream<< "Unknown1: 0x"<<std::hex<<std::setw(8)<<mUnknown1<<std::dec<<std::setw(0)<<"\n";
+    stream<< "Unknown2: 0x"<<std::hex<<std::setw(8)<<mUnknown2<<std::dec<<std::setw(0)<<"\n";
+    stream<< "Radius: "<<mRadius<<"\n";
+}
+
+
 void FlatObject::print(std::ostream &stream) const
 {
     DF::ObjectBase::print(stream);
@@ -288,6 +338,9 @@ DBlockHeader::~DBlockHeader()
 
 void DBlockHeader::load(std::istream &stream, size_t blockid, float x, float z, size_t regnum, size_t locnum)
 {
+    mOriginX = x;
+    mOriginZ = z;
+
     mUnknown1 = VFS::read_le32(stream);
     mWidth = VFS::read_le32(stream);
     mHeight = VFS::read_le32(stream);
@@ -351,9 +404,38 @@ void DBlockHeader::load(std::istream &stream, size_t blockid, float x, float z, 
                 ).first->get();
                 flat->load(stream, basepos);
             }
+            else if(type == ObjectType_Light)
+            {
+                stream.seekg(objoffset);
+                LightObject *light = mLights.insert(blockid|offset,
+                    std::unique_ptr<LightObject>(new LightObject(blockid|offset, x, y, z))
+                ).first->get();
+                light->load(stream, basepos);
+            }
 
             offset = next;
         }
+    }
+
+    // Castle blocks. Daggerfall Unity reads this off the block's start marker
+    // (TEXTURE.199 record 10) -- DaggerfallBillboard.cs treats a non-zero
+    // magnitude as "castle block", and PlayerAmbientLight then uses a much
+    // brighter ambient inside one.
+    //
+    // Our FlatObject::load reads the same bytes DFU does, but pairs magnitude
+    // and sound index into one 16-bit mFactionId (DFU builds its
+    // FactionOrMobileId from exactly those two bytes, low byte first), so the
+    // magnitude is the low byte.
+    // Scanned directly rather than through getObjectByTexture(), which treats
+    // a missing flat as an error worth logging. Most blocks simply have no
+    // start marker -- only the ones that do can carry water level or castle
+    // status -- so its absence here is the normal case, not a fault.
+    for(const std::unique_ptr<FlatObject> &flat : mFlats)
+    {
+        if(flat->mTexture != Marker_StartID)
+            continue;
+        mCastleBlock = (flat->mFactionId & 0xff) != 0;
+        break;
     }
 }
 
@@ -368,6 +450,11 @@ ObjectBase *DBlockHeader::getObject(size_t id)
     {
         auto iter = mFlats.find(id);
         if(iter != mFlats.end())
+            return iter->get();
+    }
+    {
+        auto iter = mLights.find(id);
+        if(iter != mLights.end())
             return iter->get();
     }
     return nullptr;
@@ -422,6 +509,13 @@ void DBlockHeader::print(std::ostream &stream, int objtype) const
     {
         stream<< "**** Object 0x"<<std::hex<<std::setw(8)<<*iditer<<std::setw(0)<<std::dec<<" ****\n";
         flat->print(stream);
+        ++iditer;
+    }
+    iditer = mLights.getIdList();
+    for(const std::unique_ptr<LightObject> &light : mLights)
+    {
+        stream<< "**** Object 0x"<<std::hex<<std::setw(8)<<*iditer<<std::setw(0)<<std::dec<<" ****\n";
+        light->print(stream);
         ++iditer;
     }
 }

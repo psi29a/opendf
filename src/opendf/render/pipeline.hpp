@@ -17,6 +17,7 @@ namespace osg
     class StateSet;
 
     class Vec2f;
+    class Vec3f;
 }
 
 namespace DF
@@ -78,6 +79,11 @@ public:
 
     osg::Node *createDirectionalLight();
     void removeDirectionalLight(osg::Node *node);
+
+    // animate: flicker the radius the way Daggerfall Unity animates its
+    // dungeon and city lights. Off for steady sources like the player torch.
+    osg::Node *createPointLight(const osg::Vec3f &pos, float radius, bool animate=false);
+    void removePointLight(osg::Node *node);
 
     void toggleDebugMapDisplay();
 

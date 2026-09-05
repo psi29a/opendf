@@ -178,10 +178,24 @@ void Input::handleKeyboardEvent(const SDL_KeyboardEvent &evt)
         }
         else if(evt.keysym.sym == SDLK_F3)
             mViewer->getEventQueue()->keyPress(osgGA::GUIEventAdapter::KEY_F3);
+        else if(evt.keysym.sym == SDLK_F12)
+        {
+            // The ScreenCaptureHandler listens on the viewer's event queue,
+            // which SDL events never reach on their own. It acts on the
+            // *release*, not the press (verified against OSG 3.6.5: injecting
+            // only a keyPress captures nothing), so the release below is the
+            // half that actually takes the shot -- but send both so the
+            // handler sees a well-formed key event.
+            mViewer->getEventQueue()->keyPress(osgGA::GUIEventAdapter::KEY_F12);
+        }
 
     }
     else if(evt.state == SDL_RELEASED)
+    {
         GuiIface::get().injectKeyRelease(evt.keysym.sym);
+        if(evt.keysym.sym == SDLK_F12)
+            mViewer->getEventQueue()->keyRelease(osgGA::GUIEventAdapter::KEY_F12);
+    }
 }
 
 void Input::handleTextInputEvent(const SDL_TextInputEvent &evt)

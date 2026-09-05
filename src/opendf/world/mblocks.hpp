@@ -21,6 +21,11 @@ struct MObjectBase {
 
     void load(std::istream &stream);
 
+    // Virtual, so the destructor is too. Nothing deletes these through a
+    // base pointer today -- they live by value in the MBlock containers --
+    // but with print() virtual the vtable already exists, so this costs
+    // nothing and stops the day someone does from being undefined.
+    virtual ~MObjectBase() = default;
     virtual void print(std::ostream &stream) const;
 };
 struct MModel;

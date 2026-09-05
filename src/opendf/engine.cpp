@@ -44,6 +44,12 @@
 #include <direct.h>
 #define mkdir(x,y) _mkdir(x)
 #define S_IRWXU 0
+// MSVC's <sys/stat.h> has _S_IFMT/_S_IFDIR but not the POSIX S_ISDIR test.
+// Masking with _S_IFMT first is the POSIX definition; a plain & _S_IFDIR would
+// also report true for any other type sharing that bit.
+#ifndef S_ISDIR
+#define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
+#endif
 #endif
 
 
@@ -114,6 +120,19 @@ void makeDirRecurse(std::string path)
             err = mkdir(path.c_str(), S_IRWXU);
         }
     }
+    // mkdir -p semantics: a directory that already exists is success. Without
+    // this the helper throws the first time it is pointed at an existing
+    // config dir. A *file* in the way is still a failure -- treating it as
+    // success would just move the error to the log or config write, where it
+    // is far harder to place.
+    if(err != 0 && errno == EEXIST)
+    {
+        struct stat st{};
+        if(stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode))
+            err = 0;
+        else
+            errno = ENOTDIR;
+    }
     if(err != 0)
     {
         std::stringstream sstr;
@@ -130,6 +149,34 @@ namespace DF
 CVAR(CVarInt, vid_width, 1280, 0);
 CVAR(CVarInt, vid_height, 720, 0);
 CVAR(CVarBool, vid_fullscreen, false);
+
+// Screenshots. r_shotfile is the output prefix; OSG appends a serial number
+// and the extension. r_shotframe exists for non-interactive verification:
+// render that many frames, write one shot, and quit -- which is the only way
+// to see what the renderer actually produced without a live window to look at.
+CVAR(CVarString, r_shotfile, "opendf_shot");
+CVAR(CVarInt, r_shotframe, 0, 0);
+
+namespace
+{
+    osg::ref_ptr<osgViewer::ScreenCaptureHandler> sScreenCapture;
+    osgViewer::Viewer *sCaptureViewer = nullptr;
+}
+
+CCMD(screenshot)
+{
+    if(!sScreenCapture.valid() || !sCaptureViewer)
+    {
+        Log::get().stream(Log::Level_Error)<< "Screen capture is not available";
+        return;
+    }
+    if(!params.empty())
+        sScreenCapture->setCaptureOperation(
+            new osgViewer::ScreenCaptureHandler::WriteToFile(
+                params, "png", osgViewer::ScreenCaptureHandler::WriteToFile::SEQUENTIAL_NUMBER));
+    sScreenCapture->captureNextFrame(*sCaptureViewer);
+    Log::get().stream()<< "Screenshot queued";
+}
 
 CCMD(qqq)
 {
@@ -208,10 +255,23 @@ bool Engine::parseOptions(int argc, char *argv[])
         else if(strcasecmp(argv[i], "-log") == 0)
         {
             if(i < argc-1)
+            {
                 Log::get().setLog(argv[++i]);
+                mLogPathSet = true;
+            }
         }
         else if(strcasecmp(argv[i], "-devparm") == 0)
             Log::get().setLevel(Log::Level_Debug);
+        else if(strcasecmp(argv[i], "-set") == 0)
+        {
+            // Applied after the config file loads, so it wins over it without
+            // having to edit (and permanently alter) the user's opendf.cfg.
+            if(i < argc-2)
+            {
+                mCVarOverrides.emplace_back(argv[i+1], argv[i+2]);
+                i += 2;
+            }
+        }
         else
         {
             std::stringstream str;
@@ -309,6 +369,19 @@ bool Engine::pumpEvents()
 
 bool Engine::go(void)
 {
+    // Default the log next to settings.cfg instead of dropping opendf.log into
+    // whatever directory the engine happened to be started from. -log still
+    // wins, and is taken exactly as given.
+    if(!mLogPathSet)
+    {
+        std::string path = getUserConfigDir();
+        if(!path.empty())
+        {
+            path += "/opendf";
+            makeDirRecurse(path);
+            Log::get().setLog(path+"/opendf.log");
+        }
+    }
     Log::get().initialize();
 
     // Init everything except audio (we will use OpenAL for that)
@@ -340,6 +413,12 @@ bool Engine::go(void)
         const Settings::ConfigSection &cvars = cf.getSection("CVars");
         for(const Settings::ConfigSection::value_type &cvar : cvars)
             CVar::setByName(cvar.first, cvar.second);
+
+        for(const auto &cvar : mCVarOverrides)
+        {
+            Log::get().stream()<< "  -set "<<cvar.first<<" = "<<cvar.second;
+            CVar::setByName(cvar.first, cvar.second);
+        }
     }
 
     Log::get().message("Initializing VFS...");
@@ -438,6 +517,16 @@ bool Engine::go(void)
             throw std::runtime_error(sstr.str());
         }
 
+        // SDL switches text input on with the window, which hands every
+        // keystroke to the platform input method -- on macOS that engages the
+        // Input Method Kit and is where the IMKCFRunLoopWakeUpReliable chatter
+        // comes from. We only want text input while the console is open, and
+        // with a non-Latin IME active a live input method can swallow keys
+        // before the game sees them. Input::handleKeyboard already turns it
+        // on for the console; its `if(!SDL_IsTextInputActive())` guard only
+        // makes sense if it starts off, so start it off.
+        SDL_StopTextInput();
+
         SDLUtil::graphicswindow_SDL2();
         osg::ref_ptr<osg::GraphicsContext::Traits> traits = new osg::GraphicsContext::Traits;
         SDL_GetWindowPosition(mSDLWindow, &traits->x, &traits->y);
@@ -525,17 +614,8 @@ bool Engine::go(void)
             *r_fov, pipeline.getAspectRatio(), 10.0, 10000.0
         ));
 
-        // Add a light so we can see
-        osg::Vec3f lightDir(70.f, -100.f, 10.f);
-        lightDir.normalize();
-        osg::ref_ptr<osg::Node> light = pipeline.createDirectionalLight();
-        osg::StateSet *ss = light->getOrCreateStateSet();
-        ss->addUniform(new osg::Uniform("light_direction", lightDir));
-        ss->addUniform(new osg::Uniform("diffuse_color", osg::Vec4f(1.0f, 0.988f, 0.933f, 1.0f)));
-        ss->addUniform(new osg::Uniform("specular_color", osg::Vec4f(1.0f, 1.0f, 1.0f, 1.0f)));
-        pipeline.getLightingStateSet()->getUniform("ambient_color")->set(
-            osg::Vec4f(0.537f, 0.549f, 0.627f, 1.0f)
-        );
+        // The sun and the ambient level belong to the location, so World sets
+        // them up when it loads one (see World::setSunLight).
     }
 
     {
@@ -584,7 +664,16 @@ bool Engine::go(void)
     // Region: Daggerfall, Location: Privateer's Hold
     WorldIface::get().loadDungeonByExterior(17, 179);
 
+    sScreenCapture = new osgViewer::ScreenCaptureHandler(
+        new osgViewer::ScreenCaptureHandler::WriteToFile(
+            *r_shotfile, "png", osgViewer::ScreenCaptureHandler::WriteToFile::SEQUENTIAL_NUMBER), 1);
+    // F12; the default is 'c', which collides with movement keys.
+    sScreenCapture->setKeyEventTakeScreenShot(osgGA::GUIEventAdapter::KEY_F12);
+    viewer->addEventHandler(sScreenCapture.get());
+    sCaptureViewer = viewer.get();
+
     // And away we go!
+    int framenum = 0;
     Uint32 last_tick = SDL_GetTicks();
     while(!viewer->done() && pumpEvents())
     {
@@ -597,12 +686,35 @@ bool Engine::go(void)
 
         WorldIface::get().update(timediff);
 
-        viewer->frame(timediff);
+        // No argument: OSG then uses its own reference time as the simulation
+        // time. Passing timediff here set the simulation time to the *delta*
+        // (~0.015) every frame, so osg::FrameStamp::getSimulationTime() never
+        // advanced and anything driven by it -- osgAnimation, particles,
+        // osg::Sequence -- silently stood still. timediff is still what the
+        // game systems above are stepped with; it was only ever wrong for OSG.
+        viewer->frame();
+
+        if(*r_shotframe > 0)
+        {
+            // One shot, then out. Capturing happens on the following frame, so
+            // give it one more before quitting.
+            if(++framenum == *r_shotframe)
+                sScreenCapture->captureNextFrame(*viewer);
+            else if(framenum > *r_shotframe)
+                break;
+        }
     }
     Log::get().message("Main loop shutting down...");
+    sScreenCapture = nullptr;
+    sCaptureViewer = nullptr;
     mSceneRoot->removeChildren(0, mSceneRoot->getNumChildren());
 
-    savecfg(std::string());
+    // -set is a transient override for one run; writing it back would quietly
+    // make a diagnostic flag permanent. Explicit `savecfg` still works.
+    if(mCVarOverrides.empty())
+        savecfg(std::string());
+    else
+        Log::get().message("Skipping config save (-set overrides active)");
 
     return true;
 }

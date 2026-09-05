@@ -205,6 +205,123 @@ commitments:
 * **Packaging.** Getting a build into people's hands on all three platforms
   without them having to compile it.
 
+## Lighting, measured against Daggerfall Unity
+
+Dungeon lighting is calibrated against DFU rather than eyeballed, so it is
+worth recording which numbers are theirs and which are ours.
+
+The single most important finding: **DFU renders in linear colour space**
+(`ProjectSettings.asset`, `m_ActiveColorSpace: 1`). It decodes sRGB textures to
+linear, lights in linear, and gamma-encodes on output. We were doing none of
+that -- multiplying gamma-encoded palette colours by linear light and writing
+the result straight out, which crushes midtones badly. Every DFU constant
+looked wrong here as a result, and the old `(1 - d^2/r^2)^2` falloff only
+looked acceptable because its excessive brightness cancelled the missing
+gamma. `data/shaders/object.frag`, `data/shaders/sprite.frag` and
+`data/shaders/terrain.frag` now decode albedo with `pow(c, 2.2)` into the
+RGBA16F G-buffer, and `data/shaders/combiner.frag` encodes the lit result
+back; with that in place DFU's own numbers produce a sensible image.
+
+Matching DFU:
+
+* **Dungeon ambient** `(0.12, 0.12, 0.12)`, and **castle ambient** `0.58`
+  inside castle blocks -- `PlayerAmbientLight`. The castle flag comes from the
+  magnitude byte of a block's start marker (TEXTURE.199 record 10), the same
+  place `DaggerfallBillboard.cs` reads it; `World::updateCurrentBlock` tracks
+  which block the camera stands in so it changes as you walk.
+* **Light range** `radius * 3` -- `RDBLayout.AddLight`.
+* **Light intensity** 0.8 -- the `m_Intensity` on DFU's dungeon light prefab,
+  applied through `r_lightintensity`.
+* **Falloff**, Unity's built-in point light shape. `1/(1 + 25*(d/r)^2)` is
+  `1/26` at `d == r`, not zero, so it is rescaled to
+  `(1/(1 + 25*(d/r)^2) - 1/26) * 26/25` -- exactly 1 at the source and exactly
+  0 at the radius, so a light neither leaks past the volume it claims nor pops
+  when it ends. A radius of zero is rejected before the division; the RDB
+  permits one, and it would otherwise put a NaN into an additively blended
+  light buffer.
+* **Player torch** -- a white point light on the camera, radius 240. DFU's
+  `EnablePlayerTorch` uses range 6 Unity units, which is 240 Daggerfall units
+  at `MeshReader.GlobalScale` (0.025).
+* **Light flicker** (`FlickerCallback`) -- DFU animates dungeon and city lights
+  but not interior ones. It varies *radius*, never intensity: 14 ticks a
+  second, each cycle picking a random target in `[base - Variance, base]` and
+  creeping toward it, so a light only ever dips below base and drifts back.
+  Only RDB lights flicker; the torch is steady, matching DFU, whose torch
+  gutters only when the light item is nearly spent.
+
+Ours, not DFU's:
+
+* **Exterior ambient** `(0.255, 0.267, 0.358)` is invented. It is the older
+  eyeball-tuned `(0.537, 0.549, 0.627)` converted to linear (`c^2.2`) when
+  lighting moved to linear space, so it looks as it did before rather than
+  being washed out by the encode. DFU instead lerps
+  `ExteriorNightAmbientLight (0.25)` to `ExteriorNoonAmbientLight (0.9)` by
+  daylight scale; ours is fixed and cannot track time of day because there is
+  no time of day yet.
+* **Ambient is a floor, not a base.** `dir_light.frag` computes
+  `max(ambient, diffuse * N.L)` where Unity adds ambient to everything, so ours
+  has more contrast between lit and unlit surfaces.
+
+Tuning knobs, as percentages because the cvar system has no float type. The
+`relight` console command re-applies all three without reloading:
+
+    r_ambientscale     100   scales whichever ambient is active
+    r_torchscale       100   the player torch
+    r_lightintensity    80   RDB point lights; DFU uses 0.8
+
+Still missing:
+
+* **Interior (building) ambient.** DFU has `InteriorAmbientLight` and a night
+  variant; we only have sun-on and sun-off.
+* **Special-area ambient.** DFU has `SpecialAreaLight` (also 0.58) for e.g. the
+  Daggerfall castle treasure room. It is tracked separately from the castle
+  flag and we do not read it.
+* **Night ambient scaling.** `NightAmbientLightScale` has no meaning without a
+  day/night cycle, so there is no cvar for it.
+
+Performance: each light is a *fullscreen* quad, so an off-screen light would
+otherwise cost a full screen of fragments (the shader's `discard` only saves
+work after three G-buffer fetches). The light pass runs under an ortho
+projection with `NO_CULLING`, so OSG cannot cull them for us;
+`LightCullCallback` tests each light's sphere against the *main* camera's
+frustum instead. At the Privateer's Hold spawn that skips 43 of 72 lights.
+DFU does the equivalent in `DungeonLightHandler`. Replacing the quads with real
+light volumes would go further, and has not been needed yet.
+
+## Curated tables carried over from Daggerfall Unity
+
+Some facts about the data simply aren't *in* the data, so Daggerfall Unity
+keeps hand-maintained lookup tables for them. Where we need the same
+behaviour we have to carry the same tables over; there is no deriving them.
+
+Ported so far:
+
+* **Emissive flats** (`MeshManager::loadFlat`, from DFU
+  `TextureReader.emissiveTextures`) -- fires, torches, braziers, glowing
+  creatures: the flats that light themselves rather than waiting to be lit.
+  185 archive/record pairs.
+
+  Worth recording *why* this is a list. Dungeon lights are separate RDB
+  objects, so "a light sits on this flat" looks like it should identify
+  emitters. Measured across all 1295 blocks, the correlation is strong but
+  wrong at the edges: archive 210 record 12 co-locates with a light 80% of
+  the time and is *not* emissive, record 24 never co-locates and *is*, and
+  roughly half the list is creatures and interior props with no RDB light to
+  correlate against at all. The heuristic also can't work where we need it,
+  since `loadFlat` sees a texture id and never a placement.
+
+Not ported, because nothing consumes them yet -- a table with no caller is
+just somewhere for errors to hide:
+
+* **`DungeonTextureTable`** (`{119, 120, 122, 123, 124, 168}`) -- the dungeon
+  wall texture set, needed once per-dungeon texture swapping lands. Closest
+  to being needed.
+* **Window textures** and the spectral/ghost eye special cases, both in
+  DFU's `TextureReader` -- needed when emissive gets subtler than
+  all-or-nothing, since only the glass or the eyes glow.
+* **Per-race NPC archives** (`MobilePersonBillboard`, 381-398 and 451-456) --
+  needed when townspeople exist.
+
 ## Non-goals
 
 * Shipping game assets. OpenDF requires an existing Daggerfall installation.
